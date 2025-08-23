@@ -1,0 +1,21 @@
+# Xcode / Swift
+.DS_Store
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+
+# SwiftPM
+.build/
+Package.resolved
+
+# Archives / exports
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+ExportOptions.plist
+
+# Misc
+*.swp
+*.zip
