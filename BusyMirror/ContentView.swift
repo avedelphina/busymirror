@@ -128,6 +128,10 @@ struct ContentView: View {
     @AppStorage("copyDescription") private var copyDescription: Bool = false   // Only applies when hideDetails == false
     @AppStorage("mirrorAllDay") private var mirrorAllDay: Bool = false
     @AppStorage("overlapMode") private var overlapModeRaw: String = OverlapMode.allow.rawValue
+    @AppStorage("filterByWorkHours") private var filterByWorkHours: Bool = false
+    @AppStorage("workHoursStart") private var workHoursStart: Int = 9
+    @AppStorage("workHoursEnd") private var workHoursEnd: Int = 17
+    @AppStorage("excludedTitleFilters") private var excludedTitleFiltersRaw: String = ""
     var overlapMode: OverlapMode {
         get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
         nonmutating set { overlapModeRaw = newValue.rawValue }
@@ -153,6 +157,14 @@ struct ContentView: View {
         return f
     }()
 
+    private static let hourFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .none
+        f.minimum = 0
+        f.maximum = 24
+        return f
+    }()
+
     // Deterministic ordering to keep indices stable across runs
     private func sortedCalendars(_ cals: [EKCalendar]) -> [EKCalendar] {
         return cals.sorted { a, b in
@@ -160,6 +172,17 @@ struct ContentView: View {
             if a.title != b.title { return a.title < b.title }
             return a.calendarIdentifier < b.calendarIdentifier
         }
+    }
+
+    private var excludedTitleFilterList: [String] {
+        excludedTitleFiltersRaw
+            .split { $0 == "\n" || $0 == "," }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var excludedTitleFilterTerms: [String] {
+        excludedTitleFilterList.map { $0.lowercased() }
     }
 
     private func rebuildSelectionsFromIDs() {
@@ -417,6 +440,53 @@ struct ContentView: View {
                     .frame(width: 160)
                     .disabled(isRunning)
             }
+
+            Toggle("Limit mirroring to work hours", isOn: $filterByWorkHours)
+                .disabled(isRunning)
+                .onChange(of: filterByWorkHours) { _ in saveSettingsToDefaults() }
+
+            if filterByWorkHours {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Start hour:")
+                        TextField("9", value: $workHoursStart, formatter: Self.hourFormatter)
+                            .frame(width: 48)
+                            .disabled(isRunning)
+                        Text("End hour:")
+                        TextField("17", value: $workHoursEnd, formatter: Self.hourFormatter)
+                            .frame(width: 48)
+                            .disabled(isRunning)
+                        Text("(local time)").foregroundStyle(.secondary)
+                    }
+                    Text("Events starting outside this range are skipped; end hour is exclusive.")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
+                .onChange(of: workHoursStart) { _ in
+                    clampWorkHours()
+                    saveSettingsToDefaults()
+                }
+                .onChange(of: workHoursEnd) { _ in
+                    clampWorkHours()
+                    saveSettingsToDefaults()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Skip source titles (one per line)")
+                TextEditor(text: $excludedTitleFiltersRaw)
+                    .font(.body)
+                    .frame(minHeight: 80)
+                    .disabled(isRunning)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3))
+                    )
+                Text("Matches are case-insensitive and apply before mirroring.")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+            }
+            .onChange(of: excludedTitleFiltersRaw) { _ in saveSettingsToDefaults() }
 
             Toggle("Write to calendars (disable for Dry-Run)", isOn: $writeEnabled)
                 .disabled(isRunning)
@@ -759,7 +829,22 @@ struct ContentView: View {
 
         var srcBlocks: [Block] = []
         var skippedMirrors = 0
+        let titleFilters = excludedTitleFilterTerms
+        let enforceWorkHours = filterByWorkHours && workHoursEnd > workHoursStart
+        let allowedStartMinutes = workHoursStart * 60
+        let allowedEndMinutes = workHoursEnd * 60
+        var skippedWorkHours = 0
+        var skippedTitles = 0
         for ev in srcEvents {
+            if enforceWorkHours, !ev.isAllDay, let start = ev.startDate,
+               isOutsideWorkHours(start, calendar: cal, startMinutes: allowedStartMinutes, endMinutes: allowedEndMinutes) {
+                skippedWorkHours += 1
+                continue
+            }
+            if shouldSkip(event: ev, filters: titleFilters) {
+                skippedTitles += 1
+                continue
+            }
             if SKIP_ALL_DAY_DEFAULT == true && mirrorAllDay == false && ev.isAllDay { continue }
             if isMirrorEvent(ev, prefix: titlePrefix, placeholder: placeholderTitle) {
                 // Aggregate skip count for mirrored-on-source
@@ -774,6 +859,12 @@ struct ContentView: View {
         }
         if skippedMirrors > 0 {
             log("- SKIP mirrored-on-source: \(skippedMirrors) instance(s)")
+        }
+        if skippedWorkHours > 0 {
+            log("- SKIP outside work hours: \(skippedWorkHours) event(s)")
+        }
+        if skippedTitles > 0 {
+            log("- SKIP title filter: \(skippedTitles) event(s)")
         }
         // Deduplicate source blocks to avoid duplicates from EventKit (recurrences / sync races)
         srcBlocks = uniqueBlocks(srcBlocks, trackByID: mergeGapMin == 0)
@@ -1033,6 +1124,10 @@ private struct SettingsPayload: Codable {
     var hideDetails: Bool
     var copyDescription: Bool
     var mirrorAllDay: Bool
+    var filterByWorkHours: Bool = false
+    var workHoursStart: Int = 9
+    var workHoursEnd: Int = 17
+    var excludedTitleFilters: [String] = []
     var overlapMode: String
     var titlePrefix: String
     var placeholderTitle: String
@@ -1051,6 +1146,10 @@ private struct SettingsPayload: Codable {
             hideDetails: hideDetails,
             copyDescription: copyDescription,
             mirrorAllDay: mirrorAllDay,
+            filterByWorkHours: filterByWorkHours,
+            workHoursStart: workHoursStart,
+            workHoursEnd: workHoursEnd,
+            excludedTitleFilters: excludedTitleFilterList,
             overlapMode: overlapMode.rawValue,
             titlePrefix: titlePrefix,
             placeholderTitle: placeholderTitle,
@@ -1069,11 +1168,16 @@ private struct SettingsPayload: Codable {
         hideDetails = s.hideDetails
         copyDescription = s.copyDescription
         mirrorAllDay = s.mirrorAllDay
+        filterByWorkHours = s.filterByWorkHours
+        workHoursStart = s.workHoursStart
+        workHoursEnd = s.workHoursEnd
+        excludedTitleFiltersRaw = s.excludedTitleFilters.joined(separator: "\n")
         overlapMode = OverlapMode(rawValue: s.overlapMode) ?? .allow
         titlePrefix = s.titlePrefix
         placeholderTitle = s.placeholderTitle
         autoDeleteMissing = s.autoDeleteMissing
         routes = s.routes
+        clampWorkHours()
     }
 
     private func exportSettings() {
@@ -1143,9 +1247,41 @@ private struct SettingsPayload: Codable {
         do {
             let decodedRoutes = try JSONDecoder().decode([Route].self, from: legacyData)
             routes = decodedRoutes
+            clampWorkHours()
             saveSettingsToDefaults() // upgrade stored format
         } catch {
             log("✗ Failed to load routes: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Filters
+
+    private func isOutsideWorkHours(_ startDate: Date, calendar: Calendar, startMinutes: Int, endMinutes: Int) -> Bool {
+        guard endMinutes > startMinutes else { return false }
+        let comps = calendar.dateComponents([.hour, .minute], from: startDate)
+        guard let hour = comps.hour else { return false }
+        let minute = comps.minute ?? 0
+        let start = hour * 60 + minute
+        return start < startMinutes || start >= endMinutes
+    }
+
+    private func shouldSkip(event: EKEvent, filters: [String]) -> Bool {
+        guard !filters.isEmpty else { return false }
+        let rawTitle = (event.title ?? "").lowercased()
+        let strippedTitle = stripPrefix(event.title, prefix: titlePrefix).lowercased()
+        return filters.contains { token in
+            rawTitle.contains(token) || strippedTitle.contains(token)
+        }
+    }
+
+    private func clampWorkHours() {
+        let clampedStart = min(max(workHoursStart, 0), 23)
+        if clampedStart != workHoursStart { workHoursStart = clampedStart }
+        let clampedEnd = min(max(workHoursEnd, 1), 24)
+        if clampedEnd != workHoursEnd { workHoursEnd = clampedEnd }
+        if workHoursEnd <= workHoursStart {
+            let adjustedEnd = min(workHoursStart + 1, 24)
+            if workHoursEnd != adjustedEnd { workHoursEnd = adjustedEnd }
         }
     }
 
