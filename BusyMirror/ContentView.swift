@@ -68,8 +68,13 @@ private func parseMirrorURL(_ url: URL?) -> (srcEventID: String?, occ: Date?, st
     var sDate: Date? = nil
     var eDate: Date? = nil
     if parts.count >= 3 { srcID = String(parts[2]) }
-    if parts.count >= 4, let ts = TimeInterval(parts[3]) { occDate = Date(timeIntervalSince1970: ts) }
-    if parts.count >= 6, let sTS = TimeInterval(parts[4]), let eTS = TimeInterval(parts[5]) {
+    if parts.count >= 4,
+       let ts = TimeInterval(String(parts[3])) {
+        occDate = Date(timeIntervalSince1970: ts)
+    }
+    if parts.count >= 6,
+       let sTS = TimeInterval(String(parts[4])),
+       let eTS = TimeInterval(String(parts[5])) {
         sDate = Date(timeIntervalSince1970: sTS)
         eDate = Date(timeIntervalSince1970: eTS)
     }
@@ -125,7 +130,7 @@ struct ContentView: View {
     @AppStorage("overlapMode") private var overlapModeRaw: String = OverlapMode.allow.rawValue
     var overlapMode: OverlapMode {
         get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
-        set { overlapModeRaw = newValue.rawValue }
+        nonmutating set { overlapModeRaw = newValue.rawValue }
     }
     @State private var writeEnabled = false            // dry-run unless checked
     @State private var logText = "Ready."
@@ -245,89 +250,117 @@ struct ContentView: View {
                                   overlap: overlapMode,
                                   allDay: mirrorAllDay)
                     routes.append(r)
-                }.disabled(isRunning || calendars.isEmpty || targetIDs.isEmpty)
-                Button("Clear") { routes.removeAll() }.disabled(isRunning || routes.isEmpty)
+                }
+                .disabled(isRunning || calendars.isEmpty || targetIDs.isEmpty)
+                Button("Clear") { routes.removeAll() }
+                    .disabled(isRunning || routes.isEmpty)
             }
             if routes.isEmpty {
                 Text("No routes yet. Pick a Source and Targets above, then click ‘Add from current selection’.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($routes, id: \.id) { $route in
-                    let routeVal = route.wrappedValue
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("Source:")
-                            if let sCal = calendars.first(where: { $0.calendarIdentifier == routeVal.sourceID }) {
-                                HStack(spacing: 6) {
-                                    Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
-                                    Text(calLabel(sCal)).bold()
-                                }
-                            } else {
-                                Text(labelForCalendar(id: routeVal.sourceID)).bold()
-                            }
-                            Text("→ Targets:")
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    ForEach(routeVal.targetIDs.sorted(by: <), id: \.self) { tid in
-                                        if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
-                                            HStack(spacing: 6) {
-                                                Circle().fill(calColor(tCal)).frame(width: 10, height: 10)
-                                                Text(calLabel(tCal))
-                                            }
-                                        } else {
-                                            Text(labelForCalendar(id: tid))
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: 420)
-                            Spacer()
-
-                            Toggle("Private", isOn: $route.privacy)
-                                .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
-
-                            Text("·").foregroundStyle(.secondary)
-
-                            HStack(spacing: 6) {
-                                Text("Merge gap:")
-                                TextField("0", value: $route.mergeGapHours, formatter: Self.intFormatter)
-                                    .frame(width: 48)
-                                    .disabled(isRunning)
-                                    .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
-                                Text("h").foregroundStyle(.secondary)
-                            }
-
-                            Toggle("Copy desc", isOn: $route.copyNotes)
-                                .disabled(isRunning || route.wrappedValue.privacy)
-                                .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
-
-                            HStack(spacing: 6) {
-                                Text("Overlap:")
-                                Picker("Overlap", selection: $route.overlap) {
-                                    ForEach(OverlapMode.allCases) { m in Text(m.rawValue).tag(m) }
-                                }
-                                .frame(width: 160)
-                                .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
-                            }
-                            .disabled(isRunning)
-
-                            Toggle("All‑day", isOn: $route.allDay)
-                                .disabled(isRunning)
-                                .help("Mirror all‑day events for this source.")
-
-                            Text("·").foregroundStyle(.secondary)
-
-                            Button(role: .destructive) {
-                                routes.removeAll { $0.id == routeVal.id }
-                            } label: { Text("Remove") }
-                        }
-                    }
-                    .padding(6)
-                    .background(.quaternary.opacity(0.1))
-                    .cornerRadius(6)
+                ForEach($routes, id: \.id) { routeBinding in
+                    routeCard(for: routeBinding)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func routeCard(for routeBinding: Binding<Route>) -> some View {
+        let route = routeBinding.wrappedValue
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                sourceSummaryView(for: route)
+                Text("→ Targets:")
+                targetSummaryView(for: route)
+                Spacer()
+                Toggle("Private", isOn: routeBinding.privacy)
+                    .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
+                separatorDot()
+                mergeGapField(for: routeBinding)
+                Toggle("Copy desc", isOn: routeBinding.copyNotes)
+                    .disabled(isRunning || route.privacy)
+                    .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+                overlapPicker(for: routeBinding)
+                    .disabled(isRunning)
+                Toggle("All-day", isOn: routeBinding.allDay)
+                    .disabled(isRunning)
+                    .help("Mirror all-day events for this source.")
+                separatorDot()
+                Button(role: .destructive) { removeRoute(id: route.id) } label: { Text("Remove") }
+            }
+        }
+        .padding(6)
+        .background(.quaternary.opacity(0.1))
+        .cornerRadius(6)
+    }
+
+    @ViewBuilder
+    private func sourceSummaryView(for route: Route) -> some View {
+        Text("Source:")
+        if let sCal = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
+            HStack(spacing: 6) {
+                Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
+                Text(calLabel(sCal)).bold()
+            }
+        } else {
+            Text(labelForCalendar(id: route.sourceID)).bold()
+        }
+    }
+
+    @ViewBuilder
+    private func targetSummaryView(for route: Route) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(route.targetIDs.sorted(by: <), id: \.self) { tid in
+                    if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
+                        HStack(spacing: 6) {
+                            Circle().fill(calColor(tCal)).frame(width: 10, height: 10)
+                            Text(calLabel(tCal))
+                        }
+                    } else {
+                        Text(labelForCalendar(id: tid))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 420)
+    }
+
+    @ViewBuilder
+    private func mergeGapField(for routeBinding: Binding<Route>) -> some View {
+        HStack(spacing: 6) {
+            Text("Merge gap:")
+            TextField("0", value: routeBinding.mergeGapHours, formatter: Self.intFormatter)
+                .frame(width: 48)
+                .disabled(isRunning)
+                .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
+            Text("h").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func overlapPicker(for routeBinding: Binding<Route>) -> some View {
+        HStack(spacing: 6) {
+            Text("Overlap:")
+            Picker("Overlap", selection: routeBinding.overlap) {
+                ForEach(OverlapMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .frame(width: 160)
+            .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
+        }
+    }
+
+    @ViewBuilder
+    private func separatorDot() -> some View {
+        Text("·").foregroundStyle(.secondary)
+    }
+
+    private func removeRoute(id: UUID) {
+        routes.removeAll { $0.id == id }
     }
 
     @ViewBuilder
@@ -362,9 +395,9 @@ struct ContentView: View {
                 .disabled(isRunning || hideDetails)
             Toggle("Mirror all-day events", isOn: $mirrorAllDay)
                 .disabled(isRunning)
-            Picker("Overlap mode", selection: Binding(get: { overlapMode }, set: { overlapMode = $0 })) {
+            Picker("Overlap mode", selection: $overlapModeRaw) {
                 ForEach(OverlapMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Text(mode.rawValue).tag(mode.rawValue)
                 }
             }
             .pickerStyle(.segmented)
@@ -426,7 +459,7 @@ struct ContentView: View {
                                         copyDescription = r.copyNotes
                                         mergeGapHours = max(0, r.mergeGapHours)
                                         mergeGapMin = mergeGapHours * 60
-                                        overlapMode = r.overlap
+                                        overlapModeRaw = r.overlap.rawValue
                                         mirrorAllDay = r.allDay
                                     }
                                     await runMirror()
@@ -436,7 +469,7 @@ struct ContentView: View {
                                         copyDescription = prevCopy
                                         mergeGapHours = prevGapH
                                         mergeGapMin = prevGapM
-                                        overlapMode = prevOverlap
+                                        overlapModeRaw = prevOverlap.rawValue
                                         mirrorAllDay = prevAllDay
                                     }
                                 }
@@ -601,9 +634,9 @@ struct ContentView: View {
         mergeGapMin = max(0, mergeGapHours * 60)
         if let modeStr = strArg("--mode")?.lowercased() {
             switch modeStr {
-            case "allow": overlapMode = .allow
-            case "skipcovered", "skip": overlapMode = .skipCovered
-            case "fillgaps", "gaps": overlapMode = .fillGaps
+            case "allow": overlapModeRaw = OverlapMode.allow.rawValue
+            case "skipcovered", "skip": overlapModeRaw = OverlapMode.skipCovered.rawValue
+            case "fillgaps", "gaps": overlapModeRaw = OverlapMode.fillGaps.rawValue
             default: break
             }
         }
@@ -1188,4 +1221,3 @@ private struct SettingsPayload: Codable {
     }
 }
 }
-
