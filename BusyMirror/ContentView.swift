@@ -578,7 +578,7 @@ struct ContentView: View {
         }
         .onAppear {
             requestAccess()
-            loadRoutesFromDefaults()
+            loadSettingsFromDefaults()
             mergeGapMin = max(0, mergeGapHours * 60)
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
@@ -597,7 +597,7 @@ struct ContentView: View {
             enforceNoSourceInTargets()
         }
         .onChange(of: routes) { _ in
-            saveRoutesToDefaults()
+            saveSettingsToDefaults()
         }
     }
     
@@ -1105,6 +1105,7 @@ private struct SettingsPayload: Codable {
                 let data = try Data(contentsOf: url)
                 let snap = try JSONDecoder().decode(SettingsPayload.self, from: data)
                 applySnapshot(snap)
+                saveSettingsToDefaults()
                 log("✓ Imported settings from \(url.lastPathComponent)")
             } catch {
                 log("✗ Import failed: \(error.localizedDescription)")
@@ -1112,23 +1113,37 @@ private struct SettingsPayload: Codable {
         }
     }
 
-    // MARK: - Routes persistence (UserDefaults)
-    private let routesDefaultsKey = "routes.v1"
+    // MARK: - Settings persistence (UserDefaults)
+    private let settingsDefaultsKey = "settings.v2"
+    private let legacyRoutesDefaultsKey = "routes.v1"
 
-    private func saveRoutesToDefaults() {
+    private func saveSettingsToDefaults() {
         do {
-            let data = try JSONEncoder().encode(routes)
-            UserDefaults.standard.set(data, forKey: routesDefaultsKey)
+            let data = try JSONEncoder().encode(makeSnapshot())
+            UserDefaults.standard.set(data, forKey: settingsDefaultsKey)
         } catch {
-            log("✗ Failed to save routes: \(error.localizedDescription)")
+            log("✗ Failed to save settings: \(error.localizedDescription)")
         }
     }
 
-    private func loadRoutesFromDefaults() {
-        guard let data = UserDefaults.standard.data(forKey: routesDefaultsKey) else { return }
+    private func loadSettingsFromDefaults() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: settingsDefaultsKey) {
+            do {
+                let snap = try JSONDecoder().decode(SettingsPayload.self, from: data)
+                applySnapshot(snap)
+            } catch {
+                log("✗ Failed to load settings: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        // Legacy fallback: routes-only payload
+        guard let legacyData = defaults.data(forKey: legacyRoutesDefaultsKey) else { return }
         do {
-            let decoded = try JSONDecoder().decode([Route].self, from: data)
-            routes = decoded
+            let decodedRoutes = try JSONDecoder().decode([Route].self, from: legacyData)
+            routes = decodedRoutes
+            saveSettingsToDefaults() // upgrade stored format
         } catch {
             log("✗ Failed to load routes: \(error.localizedDescription)")
         }
