@@ -6,7 +6,7 @@ import AppKit
 private let SAME_TIME_TOL_MIN: Double = 5
 private let SKIP_ALL_DAY_DEFAULT = true
 
-enum OverlapMode: String, CaseIterable, Identifiable {
+enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     case allow, skipCovered, fillGaps
     var id: String { rawValue }
 }
@@ -94,7 +94,7 @@ struct Block: Hashable {
     let occurrence: Date?     // occurrenceDate for recurring instances
 }
 
-struct Route: Identifiable, Hashable {
+struct Route: Identifiable, Hashable, Codable {
     let id = UUID()
     var sourceID: String
     var targetIDs: Set<String>
@@ -115,14 +115,18 @@ struct ContentView: View {
     @State private var sourceID: String? = nil
     @State private var targetIDs = Set<String>()
     @State private var routes: [Route] = []
-    @State private var daysForward: Int = 7
-    @State private var daysBack: Int = 1
+    @AppStorage("daysForward") private var daysForward: Int = 7
+    @AppStorage("daysBack") private var daysBack: Int = 1
     @State private var mergeGapMin: Int = 0
-    @State private var mergeGapHours: Int = 0
-    @State private var hideDetails = true        // Privacy ON by default -> use "Busy"
-    @State private var copyDescription = false   // Only applies when hideDetails == false
-    @State private var overlapMode: OverlapMode = .allow
-    @State private var mirrorAllDay = false
+    @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
+    @AppStorage("hideDetails") private var hideDetails: Bool = true        // Privacy ON by default -> use "Busy"
+    @AppStorage("copyDescription") private var copyDescription: Bool = false   // Only applies when hideDetails == false
+    @AppStorage("mirrorAllDay") private var mirrorAllDay: Bool = false
+    @AppStorage("overlapMode") private var overlapModeRaw: String = OverlapMode.allow.rawValue
+    var overlapMode: OverlapMode {
+        get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
+        set { overlapModeRaw = newValue.rawValue }
+    }
     @State private var writeEnabled = false            // dry-run unless checked
     @State private var logText = "Ready."
     @State private var isRunning = false
@@ -132,9 +136,9 @@ struct ContentView: View {
     // into the same target more than once across multiple routes within a
     // single "Mirror Now" click.
     @State private var sessionGuard = Set<String>()
-    @State private var titlePrefix: String = "🪞 "   // global title prefix for mirrored placeholders
-    @State private var placeholderTitle: String = "Busy"   // global customizable placeholder title
-    @State private var autoDeleteMissing: Bool = true       // delete mirrors whose source instance no longer exists
+    @AppStorage("titlePrefix") private var titlePrefix: String = "🪞 "   // global title prefix for mirrored placeholders
+    @AppStorage("placeholderTitle") private var placeholderTitle: String = "Busy"   // global customizable placeholder title
+    @AppStorage("autoDeleteMissing") private var autoDeleteMissing: Bool = true       // delete mirrors whose source instance no longer exists
     
     private static let intFormatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -248,22 +252,23 @@ struct ContentView: View {
                 Text("No routes yet. Pick a Source and Targets above, then click ‘Add from current selection’.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(Array(routes.enumerated()), id: \.element.id) { idx, route in
+                ForEach($routes, id: \.id) { $route in
+                    let routeVal = route.wrappedValue
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("Source:")
-                            if let sCal = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
+                            if let sCal = calendars.first(where: { $0.calendarIdentifier == routeVal.sourceID }) {
                                 HStack(spacing: 6) {
                                     Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
                                     Text(calLabel(sCal)).bold()
                                 }
                             } else {
-                                Text(labelForCalendar(id: route.sourceID)).bold()
+                                Text(labelForCalendar(id: routeVal.sourceID)).bold()
                             }
                             Text("→ Targets:")
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 10) {
-                                    ForEach(route.targetIDs.sorted(by: <), id: \.self) { tid in
+                                    ForEach(routeVal.targetIDs.sorted(by: <), id: \.self) { tid in
                                         if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
                                             HStack(spacing: 6) {
                                                 Circle().fill(calColor(tCal)).frame(width: 10, height: 10)
@@ -277,46 +282,44 @@ struct ContentView: View {
                             }
                             .frame(maxWidth: 420)
                             Spacer()
-                            Toggle("Private", isOn: Binding(get: { routes[idx].privacy }, set: { routes[idx].privacy = $0 }))
+
+                            Toggle("Private", isOn: $route.privacy)
                                 .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
+
                             Text("·").foregroundStyle(.secondary)
+
                             HStack(spacing: 6) {
                                 Text("Merge gap:")
-                                TextField("0", value: Binding(
-                                    get: { routes[idx].mergeGapHours },
-                                    set: { routes[idx].mergeGapHours = max(0, $0) }
-                                ), formatter: Self.intFormatter)
-                                .frame(width: 48)
-                                .disabled(isRunning)
-                                .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
+                                TextField("0", value: $route.mergeGapHours, formatter: Self.intFormatter)
+                                    .frame(width: 48)
+                                    .disabled(isRunning)
+                                    .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
                                 Text("h").foregroundStyle(.secondary)
                             }
-                            Toggle("Copy desc", isOn: Binding(
-                                get: { routes[idx].copyNotes },
-                                set: { routes[idx].copyNotes = $0 }
-                            ))
-                            .disabled(isRunning || routes[idx].privacy)
-                            .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+
+                            Toggle("Copy desc", isOn: $route.copyNotes)
+                                .disabled(isRunning || route.wrappedValue.privacy)
+                                .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+
                             HStack(spacing: 6) {
                                 Text("Overlap:")
-                                Picker("Overlap", selection: Binding(
-                                    get: { routes[idx].overlap },
-                                    set: { routes[idx].overlap = $0 }
-                                )) {
+                                Picker("Overlap", selection: $route.overlap) {
                                     ForEach(OverlapMode.allCases) { m in Text(m.rawValue).tag(m) }
                                 }
                                 .frame(width: 160)
                                 .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
                             }
                             .disabled(isRunning)
-                            Toggle("All‑day", isOn: Binding(
-                                get: { routes[idx].allDay },
-                                set: { routes[idx].allDay = $0 }
-                            ))
-                            .disabled(isRunning)
-                            .help("Mirror all‑day events for this source.")
+
+                            Toggle("All‑day", isOn: $route.allDay)
+                                .disabled(isRunning)
+                                .help("Mirror all‑day events for this source.")
+
                             Text("·").foregroundStyle(.secondary)
-                            Button(role: .destructive) { routes.remove(at: idx) } label: { Text("Remove") }
+
+                            Button(role: .destructive) {
+                                routes.removeAll { $0.id == routeVal.id }
+                            } label: { Text("Remove") }
                         }
                     }
                     .padding(6)
@@ -340,8 +343,8 @@ struct ContentView: View {
                     .frame(width: 60)
                     .disabled(isRunning)
             }
-            .onChange(of: daysBack) { _, v in daysBack = max(0, v) }
-            .onChange(of: daysForward) { _, v in daysForward = max(0, v) }
+            .onChange(of: daysBack) { v in daysBack = max(0, v) }
+            .onChange(of: daysForward) { v in daysForward = max(0, v) }
             HStack(spacing: 8) {
                 Text("Default merge gap:")
                 TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
@@ -349,7 +352,7 @@ struct ContentView: View {
                     .disabled(isRunning)
                 Text("hours").foregroundStyle(.secondary)
             }
-            .onChange(of: mergeGapHours) { _, newVal in
+            .onChange(of: mergeGapHours) { newVal in
                 mergeGapMin = max(0, newVal * 60)
             }
             Toggle("Hide details (use \"Busy\" title)", isOn: $hideDetails)
@@ -359,7 +362,7 @@ struct ContentView: View {
                 .disabled(isRunning || hideDetails)
             Toggle("Mirror all-day events", isOn: $mirrorAllDay)
                 .disabled(isRunning)
-            Picker("Overlap mode", selection: $overlapMode) {
+            Picker("Overlap mode", selection: Binding(get: { overlapMode }, set: { overlapMode = $0 })) {
                 ForEach(OverlapMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
@@ -388,6 +391,11 @@ struct ContentView: View {
             // Insert auto-delete toggle after writeEnabled
             Toggle("Auto-delete mirrors if source is removed", isOn: $autoDeleteMissing)
                 .disabled(isRunning)
+            HStack(spacing: 12) {
+                Button("Export Settings…") { exportSettings() }
+                Button("Import Settings…") { importSettings() }
+            }
+            .padding(.vertical, 4)
 
             HStack {
                 Button(isRunning ? "Running…" : "Mirror Now") {
@@ -400,11 +408,6 @@ struct ContentView: View {
                             for r in routes {
                                 // Resolve source index and target IDs for this route
                                 if let sIdx = indexForCalendar(id: r.sourceID) {
-                                    sourceIndex = sIdx
-                                    sourceID = r.sourceID
-                                    targetIDs = r.targetIDs
-                                    // Belt-and-suspenders: ensure source is not in targets even if UI state is stale
-                                    targetIDs.remove(r.sourceID)
                                     // Save globals
                                     let prevPrivacy = hideDetails
                                     let prevCopy = copyDescription
@@ -412,21 +415,30 @@ struct ContentView: View {
                                     let prevGapM = mergeGapMin
                                     let prevOverlap = overlapMode
                                     let prevAllDay = mirrorAllDay
-                                    // Apply per-route
-                                    hideDetails = r.privacy
-                                    copyDescription = r.copyNotes
-                                    mergeGapHours = max(0, r.mergeGapHours)
-                                    mergeGapMin = mergeGapHours * 60
-                                    overlapMode = r.overlap
-                                    mirrorAllDay = r.allDay
+                                    // Apply per-route state changes on MainActor
+                                    await MainActor.run {
+                                        sourceIndex = sIdx
+                                        sourceID = r.sourceID
+                                        targetIDs = r.targetIDs
+                                        // Belt-and-suspenders: ensure source is not in targets even if UI state is stale
+                                        targetIDs.remove(r.sourceID)
+                                        hideDetails = r.privacy
+                                        copyDescription = r.copyNotes
+                                        mergeGapHours = max(0, r.mergeGapHours)
+                                        mergeGapMin = mergeGapHours * 60
+                                        overlapMode = r.overlap
+                                        mirrorAllDay = r.allDay
+                                    }
                                     await runMirror()
-                                    // Restore globals
-                                    hideDetails = prevPrivacy
-                                    copyDescription = prevCopy
-                                    mergeGapHours = prevGapH
-                                    mergeGapMin = prevGapM
-                                    overlapMode = prevOverlap
-                                    mirrorAllDay = prevAllDay
+                                    await MainActor.run {
+                                        // Restore globals
+                                        hideDetails = prevPrivacy
+                                        copyDescription = prevCopy
+                                        mergeGapHours = prevGapH
+                                        mergeGapMin = prevGapM
+                                        overlapMode = prevOverlap
+                                        mirrorAllDay = prevAllDay
+                                    }
                                 }
                             }
                         }
@@ -446,9 +458,11 @@ struct ContentView: View {
                             } else {
                                 for r in routes {
                                     if let sIdx = indexForCalendar(id: r.sourceID) {
-                                        sourceIndex = sIdx
-                                        sourceID = r.sourceID
-                                        targetIDs = r.targetIDs
+                                        await MainActor.run {
+                                            sourceIndex = sIdx
+                                            sourceID = r.sourceID
+                                            targetIDs = r.targetIDs
+                                        }
                                         await runCleanup()
                                     }
                                 }
@@ -514,9 +528,11 @@ struct ContentView: View {
                     } else {
                         for r in routes {
                             if let sIdx = indexForCalendar(id: r.sourceID) {
-                                sourceIndex = sIdx
-                                sourceID = r.sourceID
-                                targetIDs = r.targetIDs
+                                await MainActor.run {
+                                    sourceIndex = sIdx
+                                    sourceID = r.sourceID
+                                    targetIDs = r.targetIDs
+                                }
                                 await runCleanup()
                             }
                         }
@@ -529,22 +545,26 @@ struct ContentView: View {
         }
         .onAppear {
             requestAccess()
-            mergeGapHours = mergeGapMin / 60
+            loadRoutesFromDefaults()
+            mergeGapMin = max(0, mergeGapHours * 60)
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
         }
-        .onChange(of: sourceIndex) { oldValue, newValue in
+        .onChange(of: sourceIndex) { newValue in
             // Track selected source by persistent ID and ensure it is not a target
             if newValue < calendars.count { sourceID = calendars[newValue].calendarIdentifier }
             enforceNoSourceInTargets()
         }
-        .onChange(of: targetSelections) { _, _ in
+        .onChange(of: targetSelections) { _ in
             // If the new source is accidentally included, drop it
             enforceNoSourceInTargets()
         }
-        .onChange(of: targetIDs) { _, _ in
+        .onChange(of: targetIDs) { _ in
             // If IDs contain the source’s ID, drop it
             enforceNoSourceInTargets()
+        }
+        .onChange(of: routes) { _ in
+            saveRoutesToDefaults()
         }
     }
     
@@ -610,10 +630,12 @@ struct ContentView: View {
                 let srcIdx0 = max(0, s1 - 1)
                 let tgtIdxs0: [Int] = lr[1].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces))?.advanced(by: -1) }.filter { $0 >= 0 }
                 if srcIdx0 >= calendars.count { continue }
-                sourceIndex = srcIdx0
-                sourceID = calendars[srcIdx0].calendarIdentifier
-                targetSelections = Set(tgtIdxs0)
-                targetIDs = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil })
+                await MainActor.run {
+                    sourceIndex = srcIdx0
+                    sourceID = calendars[srcIdx0].calendarIdentifier
+                    targetSelections = Set(tgtIdxs0)
+                    targetIDs = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil })
+                }
 
                 if boolArg("--cleanup-only", default: false) {
                     log("CLI: cleanup route \(part)")
@@ -970,6 +992,115 @@ struct ContentView: View {
         }
     }
     
+// MARK: - Export / Import Settings
+private struct SettingsPayload: Codable {
+    var daysBack: Int
+    var daysForward: Int
+    var mergeGapHours: Int
+    var hideDetails: Bool
+    var copyDescription: Bool
+    var mirrorAllDay: Bool
+    var overlapMode: String
+    var titlePrefix: String
+    var placeholderTitle: String
+    var autoDeleteMissing: Bool
+    var routes: [Route]
+    // optional metadata
+    var appVersion: String?
+    var exportedAt: Date = Date()
+}
+
+    private func makeSnapshot() -> SettingsPayload {
+        SettingsPayload(
+            daysBack: daysBack,
+            daysForward: daysForward,
+            mergeGapHours: mergeGapHours,
+            hideDetails: hideDetails,
+            copyDescription: copyDescription,
+            mirrorAllDay: mirrorAllDay,
+            overlapMode: overlapMode.rawValue,
+            titlePrefix: titlePrefix,
+            placeholderTitle: placeholderTitle,
+            autoDeleteMissing: autoDeleteMissing,
+            routes: routes,
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            exportedAt: Date()
+        )
+    }
+
+    private func applySnapshot(_ s: SettingsPayload) {
+        daysBack = s.daysBack
+        daysForward = s.daysForward
+        mergeGapHours = s.mergeGapHours
+        mergeGapMin = max(0, s.mergeGapHours * 60)
+        hideDetails = s.hideDetails
+        copyDescription = s.copyDescription
+        mirrorAllDay = s.mirrorAllDay
+        overlapMode = OverlapMode(rawValue: s.overlapMode) ?? .allow
+        titlePrefix = s.titlePrefix
+        placeholderTitle = s.placeholderTitle
+        autoDeleteMissing = s.autoDeleteMissing
+        routes = s.routes
+    }
+
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["json"]
+        panel.nameFieldStringValue = "BusyMirror-Settings.json"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                let data = try encoder.encode(makeSnapshot())
+                try data.write(to: url, options: Data.WritingOptions.atomic)
+                log("✓ Exported settings to \(url.path)")
+            } catch {
+                log("✗ Export failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.allowedFileTypes = ["json"]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let data = try Data(contentsOf: url)
+                let snap = try JSONDecoder().decode(SettingsPayload.self, from: data)
+                applySnapshot(snap)
+                log("✓ Imported settings from \(url.lastPathComponent)")
+            } catch {
+                log("✗ Import failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Routes persistence (UserDefaults)
+    private let routesDefaultsKey = "routes.v1"
+
+    private func saveRoutesToDefaults() {
+        do {
+            let data = try JSONEncoder().encode(routes)
+            UserDefaults.standard.set(data, forKey: routesDefaultsKey)
+        } catch {
+            log("✗ Failed to save routes: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadRoutesFromDefaults() {
+        guard let data = UserDefaults.standard.data(forKey: routesDefaultsKey) else { return }
+        do {
+            let decoded = try JSONDecoder().decode([Route].self, from: data)
+            routes = decoded
+        } catch {
+            log("✗ Failed to load routes: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Logging
     func log(_ s: String) {
         logText.append("\n" + s)
@@ -1057,3 +1188,4 @@ struct ContentView: View {
     }
 }
 }
+

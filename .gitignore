@@ -19,3 +19,4 @@ ExportOptions.plist
 # Misc
 *.swp
 *.zip
+*.sha256
