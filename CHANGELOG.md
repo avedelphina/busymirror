@@ -1,6 +1,10 @@
 # Changelog
+# Changelog
 
 All notable changes to BusyMirror will be documented in this file.
+
+## [1.2.4] - 2025-10-10
+- Fix: enable “Mirror Now” when Routes are defined even if no Source/Targets are checked in the main window. Button now enables if either routes exist or a manual selection is present.
 
 ## [1.2.3] - 2025-10-10
 - Fix: reliably save and restore settings between runs via autosave of key options and restoration of source/target selections by persistent IDs.
@@ -15,4 +19,3 @@ All notable changes to BusyMirror will be documented in this file.
 
 ## [1.2.0] - 2024-09-29
 - Feature: multi-route mirroring, overlap modes, merge gaps, work hours filter, CLI support, export/import settings.
-

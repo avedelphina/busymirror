@@ -550,7 +550,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .disabled(isRunning || targetSelections.isEmpty || calendars.isEmpty)
+                .disabled(isRunning || calendars.isEmpty || (routes.isEmpty && targetSelections.isEmpty))
 
                 Button("Cleanup Placeholders") {
                     if writeEnabled {
