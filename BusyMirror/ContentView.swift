@@ -153,8 +153,9 @@ struct ContentView: View {
     // Mirrors can run either by manual selection (source + at least one target)
     // or using predefined routes. This derived flag controls the Mirror Now button.
     private var canRunMirrorNow: Bool {
-        let manualOK = !targetIDs.isEmpty && sourceIndex < calendars.count
-        return hasAccess && !isRunning && !calendars.isEmpty && (manualOK || !routes.isEmpty)
+        // Enable Mirror Now whenever calendars are available and permission is granted.
+        // The action itself chooses between routes or manual selection.
+        return hasAccess && !isRunning && !calendars.isEmpty
     }
     
     private static let intFormatter: NumberFormatter = {
