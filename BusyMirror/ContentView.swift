@@ -150,6 +150,13 @@ struct ContentView: View {
     @AppStorage("placeholderTitle") private var placeholderTitle: String = "Busy"   // global customizable placeholder title
     @AppStorage("autoDeleteMissing") private var autoDeleteMissing: Bool = true       // delete mirrors whose source instance no longer exists
     
+    // Mirrors can run either by manual selection (source + at least one target)
+    // or using predefined routes. This derived flag controls the Mirror Now button.
+    private var canRunMirrorNow: Bool {
+        let manualOK = !targetIDs.isEmpty && sourceIndex < calendars.count
+        return hasAccess && !isRunning && !calendars.isEmpty && (manualOK || !routes.isEmpty)
+    }
+    
     private static let intFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .none
@@ -550,7 +557,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .disabled(isRunning || calendars.isEmpty || (routes.isEmpty && targetSelections.isEmpty))
+                .disabled(!canRunMirrorNow)
 
                 Button("Cleanup Placeholders") {
                     if writeEnabled {
