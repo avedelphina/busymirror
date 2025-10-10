@@ -1,6 +1,7 @@
 import SwiftUI
 import EventKit
 import AppKit
+import ObjectiveC
 
 /// Placeholder title is configurable via state (see `placeholderTitle`)
 private let SAME_TIME_TOL_MIN: Double = 5
@@ -108,6 +109,32 @@ struct Route: Identifiable, Hashable, Codable {
     var mergeGapHours: Int         // per-route merge gap (hours)
     var overlap: OverlapMode       // per-route overlap behavior
     var allDay: Bool               // per-route mirror all-day
+    var markPrivate: Bool = false  // mark mirrored events as Private (if supported by account)
+
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, mergeGapHours, overlap, allDay, markPrivate }
+
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, markPrivate: Bool = false) {
+        self.sourceID = sourceID
+        self.targetIDs = targetIDs
+        self.privacy = privacy
+        self.copyNotes = copyNotes
+        self.mergeGapHours = mergeGapHours
+        self.overlap = overlap
+        self.allDay = allDay
+        self.markPrivate = markPrivate
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.sourceID = try c.decode(String.self, forKey: .sourceID)
+        self.targetIDs = try c.decode(Set<String>.self, forKey: .targetIDs)
+        self.privacy = try c.decode(Bool.self, forKey: .privacy)
+        self.copyNotes = try c.decode(Bool.self, forKey: .copyNotes)
+        self.mergeGapHours = try c.decode(Int.self, forKey: .mergeGapHours)
+        self.overlap = try c.decode(OverlapMode.self, forKey: .overlap)
+        self.allDay = try c.decode(Bool.self, forKey: .allDay)
+        self.markPrivate = (try? c.decode(Bool.self, forKey: .markPrivate)) ?? false
+    }
 }
 
 struct ContentView: View {
@@ -126,6 +153,7 @@ struct ContentView: View {
     @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
     @AppStorage("hideDetails") private var hideDetails: Bool = true        // Privacy ON by default -> use "Busy"
     @AppStorage("copyDescription") private var copyDescription: Bool = false   // Only applies when hideDetails == false
+    @AppStorage("markPrivate") private var markPrivate: Bool = false           // If ON, set event Private (server-side) when mirroring
     @AppStorage("mirrorAllDay") private var mirrorAllDay: Bool = false
     @AppStorage("overlapMode") private var overlapModeRaw: String = OverlapMode.allow.rawValue
     @AppStorage("filterByWorkHours") private var filterByWorkHours: Bool = false
@@ -280,7 +308,8 @@ struct ContentView: View {
                                   copyNotes: copyDescription,
                                   mergeGapHours: mergeGapHours,
                                   overlap: overlapMode,
-                                  allDay: mirrorAllDay)
+                                  allDay: mirrorAllDay,
+                                  markPrivate: markPrivate)
                     routes.append(r)
                 }
                 .disabled(isRunning || calendars.isEmpty || targetIDs.isEmpty)
@@ -314,6 +343,9 @@ struct ContentView: View {
                 Toggle("Copy desc", isOn: routeBinding.copyNotes)
                     .disabled(isRunning || route.privacy)
                     .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+                Toggle("Mark Private", isOn: routeBinding.markPrivate)
+                    .disabled(isRunning)
+                    .help("If ON, attempt to mark mirrored events as Private on the server (e.g., Exchange). Titles still use your prefix and source title.")
                 overlapPicker(for: routeBinding)
                     .disabled(isRunning)
                 Toggle("All-day", isOn: routeBinding.allDay)
@@ -425,6 +457,8 @@ struct ContentView: View {
 
             Toggle("Copy description when mirroring", isOn: $copyDescription)
                 .disabled(isRunning || hideDetails)
+            Toggle("Mark mirrored events as Private (if supported)", isOn: $markPrivate)
+                .disabled(isRunning)
             Toggle("Mirror all-day events", isOn: $mirrorAllDay)
                 .disabled(isRunning)
             Toggle("Mirror accepted events only", isOn: $mirrorAcceptedOnly)
@@ -542,6 +576,7 @@ struct ContentView: View {
                                         mergeGapMin = mergeGapHours * 60
                                         overlapModeRaw = r.overlap.rawValue
                                         mirrorAllDay = r.allDay
+                                        markPrivate = r.markPrivate
                                     }
                                     await runMirror()
                                     await MainActor.run {
@@ -676,6 +711,7 @@ struct ContentView: View {
         .onChange(of: titlePrefix) { _ in saveSettingsToDefaults() }
         .onChange(of: placeholderTitle) { _ in saveSettingsToDefaults() }
         .onChange(of: autoDeleteMissing) { _ in saveSettingsToDefaults() }
+        .onChange(of: markPrivate) { _ in saveSettingsToDefaults() }
         .onChange(of: sourceIndex) { newValue in
             // Track selected source by persistent ID and ensure it is not a target
             if newValue < calendars.count { sourceID = calendars[newValue].calendarIdentifier }
@@ -1016,6 +1052,7 @@ struct ContentView: View {
                     let sid0 = blk.srcEventID ?? ""
                     let occ0 = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
                     existingByTime.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid0)|\(occ0)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
+                    _ = setEventPrivateIfSupported(existingByTime, markPrivate)
                     do {
                         try store.save(existingByTime, span: .thisEvent, commit: true)
                         log("✓ UPDATED [\(srcName) -> \(tgtName)] (by time) \(blk.start) -> \(blk.end)")
@@ -1058,6 +1095,7 @@ struct ContentView: View {
                             existing.notes = nil
                         }
                         existing.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
+                        _ = setEventPrivateIfSupported(existing, markPrivate)
                         do {
                             try store.save(existing, span: .thisEvent, commit: true)
                             log("✓ UPDATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
@@ -1098,6 +1136,7 @@ struct ContentView: View {
                 let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
                 newEv.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
                 newEv.availability = .busy
+                _ = setEventPrivateIfSupported(newEv, markPrivate)
                 do {
                     try store.save(newEv, span: .thisEvent, commit: true)
                     created += 1
@@ -1177,6 +1216,7 @@ private struct SettingsPayload: Codable {
     var mergeGapHours: Int
     var hideDetails: Bool
     var copyDescription: Bool
+    var markPrivate: Bool
     var mirrorAllDay: Bool
     var filterByWorkHours: Bool = false
     var workHoursStart: Int = 9
@@ -1203,6 +1243,7 @@ private struct SettingsPayload: Codable {
             mergeGapHours: mergeGapHours,
             hideDetails: hideDetails,
             copyDescription: copyDescription,
+            markPrivate: markPrivate,
             mirrorAllDay: mirrorAllDay,
             filterByWorkHours: filterByWorkHours,
             workHoursStart: workHoursStart,
@@ -1229,6 +1270,7 @@ private struct SettingsPayload: Codable {
         hideDetails = s.hideDetails
         copyDescription = s.copyDescription
         mirrorAllDay = s.mirrorAllDay
+        markPrivate = s.markPrivate
         filterByWorkHours = s.filterByWorkHours
         workHoursStart = s.workHoursStart
         workHoursEnd = s.workHoursEnd
@@ -1330,6 +1372,26 @@ private struct SettingsPayload: Codable {
         let minute = comps.minute ?? 0
         let start = hour * 60 + minute
         return start < startMinutes || start >= endMinutes
+    }
+
+    // Best-effort: mark an event as Private if the account/server supports it.
+    // Uses ObjC selector lookup to avoid crashes on unsupported keys.
+    private func setEventPrivateIfSupported(_ ev: EKEvent, _ flag: Bool) -> Bool {
+        guard flag else { return false }
+        let sel = Selector(("setPrivate:"))
+        if ev.responds(to: sel) {
+            _ = ev.perform(sel, with: NSNumber(value: true))
+            return true
+        }
+        // Some backends may expose privacy level via a numeric setter
+        let sel2 = Selector(("setPrivacy:"))
+        if ev.responds(to: sel2) {
+            // 1 may represent private on some providers; this is best-effort.
+            _ = ev.perform(sel2, with: NSNumber(value: 1))
+            return true
+        }
+        // Not supported; no-op
+        return false
     }
 
     private func shouldSkip(event: EKEvent, filters: [String]) -> Bool {
