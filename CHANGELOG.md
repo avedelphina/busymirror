@@ -6,6 +6,10 @@ All notable changes to BusyMirror will be documented in this file.
 ## [1.2.4] - 2025-10-10
 - Fix: enable “Mirror Now” when Routes are defined even if no Source/Targets are checked in the main window. Button now enables if either routes exist or a manual selection is present.
 
+## [1.3.0] - 2025-10-10
+- New: Mark Private option to mirror with prefix + real title and set event privacy on supported servers; available globally and per-route; persisted.
+- Misc: calendar access fixes, concurrency annotations, accepted‑only filter, settings autosave/restore, Mirror Now enablement.
+
 ## [1.2.3] - 2025-10-10
 - Fix: reliably save and restore settings between runs via autosave of key options and restoration of source/target selections by persistent IDs.
 - UX: persist Source and Target selections; rebuild indices on launch so UI matches saved IDs.
