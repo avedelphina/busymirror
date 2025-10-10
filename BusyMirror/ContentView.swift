@@ -656,18 +656,33 @@ struct ContentView: View {
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
         }
+        // Persist key settings whenever they change, to ensure restore between runs
+        .onChange(of: daysBack) { _ in saveSettingsToDefaults() }
+        .onChange(of: daysForward) { _ in saveSettingsToDefaults() }
+        .onChange(of: mergeGapHours) { _ in saveSettingsToDefaults() }
+        .onChange(of: hideDetails) { _ in saveSettingsToDefaults() }
+        .onChange(of: copyDescription) { _ in saveSettingsToDefaults() }
+        .onChange(of: mirrorAllDay) { _ in saveSettingsToDefaults() }
+        .onChange(of: mirrorAcceptedOnly) { _ in saveSettingsToDefaults() }
+        .onChange(of: overlapModeRaw) { _ in saveSettingsToDefaults() }
+        .onChange(of: titlePrefix) { _ in saveSettingsToDefaults() }
+        .onChange(of: placeholderTitle) { _ in saveSettingsToDefaults() }
+        .onChange(of: autoDeleteMissing) { _ in saveSettingsToDefaults() }
         .onChange(of: sourceIndex) { newValue in
             // Track selected source by persistent ID and ensure it is not a target
             if newValue < calendars.count { sourceID = calendars[newValue].calendarIdentifier }
             enforceNoSourceInTargets()
+            saveSettingsToDefaults()
         }
         .onChange(of: targetSelections) { _ in
             // If the new source is accidentally included, drop it
             enforceNoSourceInTargets()
+            saveSettingsToDefaults()
         }
         .onChange(of: targetIDs) { _ in
             // If IDs contain the source’s ID, drop it
             enforceNoSourceInTargets()
+            saveSettingsToDefaults()
         }
         .onChange(of: routes) { _ in
             saveSettingsToDefaults()
@@ -1165,6 +1180,9 @@ private struct SettingsPayload: Codable {
     var placeholderTitle: String
     var autoDeleteMissing: Bool
     var routes: [Route]
+    // UI selections (optional for backward compatibility)
+    var selectedSourceID: String? = nil
+    var selectedTargetIDs: [String]? = nil
     // optional metadata
     var appVersion: String?
     var exportedAt: Date = Date()
@@ -1188,6 +1206,8 @@ private struct SettingsPayload: Codable {
             placeholderTitle: placeholderTitle,
             autoDeleteMissing: autoDeleteMissing,
             routes: routes,
+            selectedSourceID: sourceID,
+            selectedTargetIDs: Array(targetIDs).sorted(),
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             exportedAt: Date()
         )
@@ -1211,7 +1231,12 @@ private struct SettingsPayload: Codable {
         placeholderTitle = s.placeholderTitle
         autoDeleteMissing = s.autoDeleteMissing
         routes = s.routes
+        // Restore UI selections if provided
+        if let selSrc = s.selectedSourceID { sourceID = selSrc }
+        if let selTgts = s.selectedTargetIDs { targetIDs = Set(selTgts) }
         clampWorkHours()
+        // Rebuild indices from IDs after restoring selections
+        rebuildSelectionsFromIDs()
     }
 
     private func exportSettings() {

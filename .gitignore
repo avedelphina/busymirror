@@ -20,3 +20,4 @@ ExportOptions.plist
 *.swp
 *.zip
 *.sha256
+dist/
