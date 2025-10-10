@@ -132,6 +132,7 @@ struct ContentView: View {
     @AppStorage("workHoursStart") private var workHoursStart: Int = 9
     @AppStorage("workHoursEnd") private var workHoursEnd: Int = 17
     @AppStorage("excludedTitleFilters") private var excludedTitleFiltersRaw: String = ""
+    @AppStorage("mirrorAcceptedOnly") private var mirrorAcceptedOnly: Bool = false
     var overlapMode: OverlapMode {
         get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
         nonmutating set { overlapModeRaw = newValue.rawValue }
@@ -417,6 +418,8 @@ struct ContentView: View {
             Toggle("Copy description when mirroring", isOn: $copyDescription)
                 .disabled(isRunning || hideDetails)
             Toggle("Mirror all-day events", isOn: $mirrorAllDay)
+                .disabled(isRunning)
+            Toggle("Mirror accepted events only", isOn: $mirrorAcceptedOnly)
                 .disabled(isRunning)
             Picker("Overlap mode", selection: $overlapModeRaw) {
                 ForEach(OverlapMode.allCases) { mode in
@@ -755,13 +758,18 @@ struct ContentView: View {
     }
 
     // MARK: - Permissions & Calendars
+    @MainActor
     func requestAccess() {
         log("Requesting calendar access…")
         if #available(macOS 14.0, *) {
             store.requestFullAccessToEvents { granted, _ in
                 DispatchQueue.main.async {
                     hasAccess = granted
-                    if granted { reloadCalendars() }
+                    if granted {
+                        // Reinitialize the store after permission changes to ensure sources load
+                        store = EKEventStore()
+                        reloadCalendars()
+                    }
                     log(granted ? "Access granted." : "Access denied.")
                 }
             }
@@ -769,13 +777,18 @@ struct ContentView: View {
             store.requestAccess(to: .event) { granted, _ in
                 DispatchQueue.main.async {
                     hasAccess = granted
-                    if granted { reloadCalendars() }
+                    if granted {
+                        // Reinitialize the store after permission changes to ensure sources load
+                        store = EKEventStore()
+                        reloadCalendars()
+                    }
                     log(granted ? "Access granted." : "Access denied.")
                 }
             }
         }
     }
     
+    @MainActor
     func reloadCalendars() {
         let fetched = store.calendars(for: .event)
         calendars = sortedCalendars(fetched)
@@ -835,7 +848,22 @@ struct ContentView: View {
         let allowedEndMinutes = workHoursEnd * 60
         var skippedWorkHours = 0
         var skippedTitles = 0
+        var skippedStatus = 0
         for ev in srcEvents {
+            if mirrorAcceptedOnly, ev.hasAttendees {
+                // Only include events where the current user's attendee status is Accepted
+                let attendees = ev.attendees ?? []
+                if let me = attendees.first(where: { $0.isCurrentUser }) {
+                    if me.participantStatus != .accepted {
+                        skippedStatus += 1
+                        continue
+                    }
+                } else {
+                    // If we cannot determine a self attendee, treat as not accepted
+                    skippedStatus += 1
+                    continue
+                }
+            }
             if enforceWorkHours, !ev.isAllDay, let start = ev.startDate,
                isOutsideWorkHours(start, calendar: cal, startMinutes: allowedStartMinutes, endMinutes: allowedEndMinutes) {
                 skippedWorkHours += 1
@@ -865,6 +893,9 @@ struct ContentView: View {
         }
         if skippedTitles > 0 {
             log("- SKIP title filter: \(skippedTitles) event(s)")
+        }
+        if skippedStatus > 0 {
+            log("- SKIP non-accepted status: \(skippedStatus) event(s)")
         }
         // Deduplicate source blocks to avoid duplicates from EventKit (recurrences / sync races)
         srcBlocks = uniqueBlocks(srcBlocks, trackByID: mergeGapMin == 0)
@@ -1128,6 +1159,7 @@ private struct SettingsPayload: Codable {
     var workHoursStart: Int = 9
     var workHoursEnd: Int = 17
     var excludedTitleFilters: [String] = []
+    var mirrorAcceptedOnly: Bool = false
     var overlapMode: String
     var titlePrefix: String
     var placeholderTitle: String
@@ -1150,6 +1182,7 @@ private struct SettingsPayload: Codable {
             workHoursStart: workHoursStart,
             workHoursEnd: workHoursEnd,
             excludedTitleFilters: excludedTitleFilterList,
+            mirrorAcceptedOnly: mirrorAcceptedOnly,
             overlapMode: overlapMode.rawValue,
             titlePrefix: titlePrefix,
             placeholderTitle: placeholderTitle,
@@ -1172,6 +1205,7 @@ private struct SettingsPayload: Codable {
         workHoursStart = s.workHoursStart
         workHoursEnd = s.workHoursEnd
         excludedTitleFiltersRaw = s.excludedTitleFilters.joined(separator: "\n")
+        mirrorAcceptedOnly = s.mirrorAcceptedOnly
         overlapMode = OverlapMode(rawValue: s.overlapMode) ?? .allow
         titlePrefix = s.titlePrefix
         placeholderTitle = s.placeholderTitle
