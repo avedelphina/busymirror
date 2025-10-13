@@ -3,6 +3,9 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.1] - 2025-10-13
+- Fix: auto-delete of mirrored placeholders when the source is removed now works even if no source instances remain in the window. Also cleans legacy mirrors without URLs by matching exact times.
+
 ## [1.2.4] - 2025-10-10
 - Fix: enable “Mirror Now” when Routes are defined even if no Source/Targets are checked in the main window. Button now enables if either routes exist or a manual selection is present.
 

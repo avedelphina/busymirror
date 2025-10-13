@@ -1006,6 +1006,7 @@ struct ContentView: View {
             var created = 0
             var skipped = 0
             var updated = 0
+            var warnedPrivateUnsupported = false
 
             // Cross-route loop guard: unique key generator for (source, occurrence/time, target)
             func guardKey(for blk: Block, targetID: String) -> String {
@@ -1052,7 +1053,11 @@ struct ContentView: View {
                     let sid0 = blk.srcEventID ?? ""
                     let occ0 = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
                     existingByTime.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid0)|\(occ0)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
-                    _ = setEventPrivateIfSupported(existingByTime, markPrivate)
+                    let okTime = setEventPrivateIfSupported(existingByTime, markPrivate)
+                    if markPrivate && !okTime && !warnedPrivateUnsupported {
+                        log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
+                        warnedPrivateUnsupported = true
+                    }
                     do {
                         try store.save(existingByTime, span: .thisEvent, commit: true)
                         log("✓ UPDATED [\(srcName) -> \(tgtName)] (by time) \(blk.start) -> \(blk.end)")
@@ -1095,7 +1100,11 @@ struct ContentView: View {
                             existing.notes = nil
                         }
                         existing.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
-                        _ = setEventPrivateIfSupported(existing, markPrivate)
+                        let okOcc = setEventPrivateIfSupported(existing, markPrivate)
+                        if markPrivate && !okOcc && !warnedPrivateUnsupported {
+                            log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
+                            warnedPrivateUnsupported = true
+                        }
                         do {
                             try store.save(existing, span: .thisEvent, commit: true)
                             log("✓ UPDATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
@@ -1136,7 +1145,11 @@ struct ContentView: View {
                 let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
                 newEv.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
                 newEv.availability = .busy
-                _ = setEventPrivateIfSupported(newEv, markPrivate)
+                let okNew = setEventPrivateIfSupported(newEv, markPrivate)
+                if markPrivate && !okNew && !warnedPrivateUnsupported {
+                    log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
+                    warnedPrivateUnsupported = true
+                }
                 do {
                     try store.save(newEv, span: .thisEvent, commit: true)
                     created += 1
@@ -1177,34 +1190,55 @@ struct ContentView: View {
                 }
             }
             log("[Summary → \(tgtName)] created=\(created), updated=\(updated), skipped=\(skipped)")
-            // Auto-delete placeholders whose source instance no longer exists
+            // Auto-delete placeholders whose source instance no longer exists.
+            // Works even when no source events remain in the window, and
+            // also cleans up legacy mirrors that lack a mirror URL (by time).
             if autoDeleteMissing {
-                let validKeys: Set<String> = Set(baseBlocks.compactMap { blk in
-                    if (mergeGapMin == 0), let sid = blk.srcEventID {
-                        let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                        return "\(sid)|\(occTS)"
-                    }
-                    return nil
+                let trackByID = (mergeGapMin == 0)
+                // Build valid occurrence keys from current source blocks (when trackByID)
+                let validOccKeys: Set<String> = Set(baseBlocks.compactMap { blk in
+                    guard trackByID, let sid = blk.srcEventID else { return nil }
+                    let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
+                    return "\(sid)|\(occTS)"
                 })
-                if !validKeys.isEmpty {
-                    var removed = 0
-                    for (_, ev) in placeholdersByOccurrenceID {
-                        if ev.calendar.calendarIdentifier != tgt.calendarIdentifier { continue }
-                        let parsed = parseMirrorURL(ev.url)
-                        if let sid = parsed.srcEventID, let occ = parsed.occ {
-                            let k = "\(sid)|\(occ.timeIntervalSince1970)"
-                            if !validKeys.contains(k) {
-                                if !writeEnabled {
-                                    log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
-                                } else {
-                                    do { try store.remove(ev, span: .thisEvent, commit: true); removed += 1 }
-                                    catch { log("Delete failed: \(error.localizedDescription)") }
-                                }
-                            }
+                // Also build valid time keys for legacy/fallback cleanup
+                let validTimeKeys: Set<String> = Set(baseBlocks.map { blk in
+                    "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
+                })
+
+                // Consider all known placeholders on target (URL or title-identified)
+                // Deduplicate by eventIdentifier to avoid double-processing updated items
+                var byID: [String: EKEvent] = [:]
+                for tv in placeholdersByTime.values {
+                    guard tv.calendar.calendarIdentifier == tgt.calendarIdentifier else { continue }
+                    if let eid = tv.eventIdentifier { byID[eid] = tv }
+                }
+
+                var removed = 0
+                for ev in byID.values {
+                    let parsed = parseMirrorURL(ev.url)
+                    var shouldDelete = false
+                    if let sid = parsed.srcEventID, let occ = parsed.occ {
+                        let k = "\(sid)|\(occ.timeIntervalSince1970)"
+                        // If key not present among current source instances, delete
+                        if !validOccKeys.contains(k) { shouldDelete = true }
+                    } else if trackByID {
+                        // Legacy fallback: no URL -> compare exact time window membership
+                        if let s = ev.startDate, let e = ev.endDate {
+                            let tk = "\(s.timeIntervalSince1970)|\(e.timeIntervalSince1970)"
+                            if !validTimeKeys.contains(tk) { shouldDelete = true }
                         }
                     }
-                    if removed > 0 { log("[Cleanup missing for \(tgtName)] deleted=\(removed)") }
+                    if shouldDelete {
+                        if !writeEnabled {
+                            log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
+                        } else {
+                            do { try store.remove(ev, span: .thisEvent, commit: true); removed += 1 }
+                            catch { log("Delete failed: \(error.localizedDescription)") }
+                        }
+                    }
                 }
+                if removed > 0 { log("[Cleanup missing for \(tgtName)] deleted=\(removed)") }
             }
         }
     }
@@ -1389,6 +1423,22 @@ private struct SettingsPayload: Codable {
             // 1 may represent private on some providers; this is best-effort.
             _ = ev.perform(sel2, with: NSNumber(value: 1))
             return true
+        }
+        // Try common KVC keys seen in some providers (best-effort, may be no-ops)
+        let kvPairs: [(String, Any)] = [
+            ("private", true),
+            ("isPrivate", true),
+            ("privacy", 1),
+            ("sensitivity", 1), // Exchange often: 1=personal, 2=private; varies
+            ("classification", 1) // iCalendar CLASS: 1 might map to PRIVATE
+        ]
+        for (key, val) in kvPairs {
+            do {
+                ev.setValue(val, forKey: key)
+                return true
+            } catch {
+                // ignore and try next
+            }
         }
         // Not supported; no-op
         return false
