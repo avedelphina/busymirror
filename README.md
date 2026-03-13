@@ -37,7 +37,25 @@ See `CHANGELOG.md` for notable changes.
 ## CLI (optional)
 - Run from Terminal with `--routes` to mirror without the UI. Example:
   - `BusyMirror.app/Contents/MacOS/BusyMirror --routes "1->2,3; 4->5" --write 1 --days-forward 7 --mode allow --exit`
-- Flags exist for privacy, all-day, merge gap, days window, overlap mode, and cleanup.
+- Run the routes already saved in the app settings:
+  - `BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit`
+- Flags exist for privacy, all-day, merge gap, days window, overlap mode, cleanup, and filters.
+- Filters:
+  - `--exclude-titles "token1, token2"`
+  - `--exclude-organizers "alice@example.com, Example Org"`
+  - Tokens are comma or newline separated; matching is case-insensitive.
+
+## Logs
+- BusyMirror now writes a persistent log file to `~/Library/Logs/BusyMirror/BusyMirror.log`.
+- When the file grows large, the previous file is rotated to `~/Library/Logs/BusyMirror/BusyMirror.previous.log`.
+- In the UI, use `Reveal Log File` to open the current log directly in Finder.
+
+## Scheduling
+- Yes. The recommended way is macOS `launchd` calling the built-in CLI with saved routes:
+  - `/Applications/BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit`
+- This is more stable than index-based `--routes`, because it uses the routes and per-route options you already configured in the UI.
+- A typical `launchd` job can run this on a daily or weekday schedule after you grant calendar access once in the app.
+- Note: scheduled headless runs depend on Calendar permission being granted to the installed app. Because these local builds are unsigned, macOS may require re-granting permission after replacing the app bundle with a new build.
 
 ## Roadmap
 See [ROADMAP.md](ROADMAP.md)

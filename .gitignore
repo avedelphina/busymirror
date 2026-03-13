@@ -18,6 +18,7 @@ ExportOptions.plist
 
 # Misc
 *.swp
+*.profraw
 *.zip
 *.sha256
 dist/

@@ -7,6 +7,52 @@ import ObjectiveC
 private let SAME_TIME_TOL_MIN: Double = 5
 private let SKIP_ALL_DAY_DEFAULT = true
 
+private enum AppLogStore {
+    private static let queue = DispatchQueue(label: "BusyMirror.log.store")
+    private static let maxLogSizeBytes: UInt64 = 1_000_000
+
+    static let logDirectoryURL: URL = {
+        let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+        return base.appendingPathComponent("Logs/BusyMirror", isDirectory: true)
+    }()
+
+    static let logFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.log", isDirectory: false)
+    private static let archivedLogFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.previous.log", isDirectory: false)
+
+    private static let timestampFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static func append(_ message: String) {
+        let line = "[\(timestampFormatter.string(from: Date()))] \(message)\n"
+        queue.async {
+            let fm = FileManager.default
+            do {
+                try fm.createDirectory(at: logDirectoryURL, withIntermediateDirectories: true)
+                if let attrs = try? fm.attributesOfItem(atPath: logFileURL.path),
+                   let size = attrs[.size] as? NSNumber,
+                   size.uint64Value >= maxLogSizeBytes {
+                    try? fm.removeItem(at: archivedLogFileURL)
+                    try? fm.moveItem(at: logFileURL, to: archivedLogFileURL)
+                }
+                if !fm.fileExists(atPath: logFileURL.path) {
+                    fm.createFile(atPath: logFileURL.path, contents: nil)
+                }
+                guard let data = line.data(using: .utf8),
+                      let handle = FileHandle(forWritingAtPath: logFileURL.path) else { return }
+                defer { handle.closeFile() }
+                handle.seekToEndOfFile()
+                handle.write(data)
+            } catch {
+                // Logging must never break the app's main behavior.
+            }
+        }
+    }
+}
+
 enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     case allow, skipCovered, fillGaps
     var id: String { rawValue }
@@ -60,14 +106,18 @@ func uniqueBlocks(_ blocks: [Block], trackByID: Bool) -> [Block] {
 }
 
 // Parse mirror URL: mirror://<tgtID>|<srcCalID>|<srcEventID>|<occTS>|<startTS>|<endTS>
-private func parseMirrorURL(_ url: URL?) -> (srcEventID: String?, occ: Date?, start: Date?, end: Date?) {
-    guard let abs = url?.absoluteString, abs.hasPrefix("mirror://") else { return (nil, nil, nil, nil) }
+private func parseMirrorURL(_ url: URL?) -> (targetCalID: String?, sourceCalID: String?, srcEventID: String?, occ: Date?, start: Date?, end: Date?) {
+    guard let abs = url?.absoluteString, abs.hasPrefix("mirror://") else { return (nil, nil, nil, nil, nil, nil) }
     let body = abs.dropFirst("mirror://".count)
     let parts = body.split(separator: "|")
+    var targetCalID: String? = nil
+    var sourceCalID: String? = nil
     var srcID: String? = nil
     var occDate: Date? = nil
     var sDate: Date? = nil
     var eDate: Date? = nil
+    if parts.count >= 1 { targetCalID = String(parts[0]) }
+    if parts.count >= 2 { sourceCalID = String(parts[1]) }
     if parts.count >= 3 { srcID = String(parts[2]) }
     if parts.count >= 4,
        let ts = TimeInterval(String(parts[3])) {
@@ -79,7 +129,7 @@ private func parseMirrorURL(_ url: URL?) -> (srcEventID: String?, occ: Date?, st
         sDate = Date(timeIntervalSince1970: sTS)
         eDate = Date(timeIntervalSince1970: eTS)
     }
-    return (srcID, occDate, sDate, eDate)
+    return (targetCalID, sourceCalID, srcID, occDate, sDate, eDate)
 }
 
 // Recognize a mirrored placeholder even if URL is missing
@@ -160,6 +210,7 @@ struct ContentView: View {
     @AppStorage("workHoursStart") private var workHoursStart: Int = 9
     @AppStorage("workHoursEnd") private var workHoursEnd: Int = 17
     @AppStorage("excludedTitleFilters") private var excludedTitleFiltersRaw: String = ""
+    @AppStorage("excludedOrganizerFilters") private var excludedOrganizerFiltersRaw: String = ""
     @AppStorage("mirrorAcceptedOnly") private var mirrorAcceptedOnly: Bool = false
     var overlapMode: OverlapMode {
         get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
@@ -181,9 +232,9 @@ struct ContentView: View {
     // Mirrors can run either by manual selection (source + at least one target)
     // or using predefined routes. This derived flag controls the Mirror Now button.
     private var canRunMirrorNow: Bool {
-        // Enable Mirror Now whenever calendars are available and permission is granted.
-        // The action itself chooses between routes or manual selection.
-        return hasAccess && !isRunning && !calendars.isEmpty
+        let hasManualTargets = !targetIDs.isEmpty
+        let hasRouteTargets = routes.contains { !$0.targetIDs.isEmpty }
+        return hasAccess && !isRunning && !calendars.isEmpty && (hasManualTargets || hasRouteTargets)
     }
     
     private static let intFormatter: NumberFormatter = {
@@ -222,16 +273,82 @@ struct ContentView: View {
         excludedTitleFilterList.map { $0.lowercased() }
     }
 
+    private var excludedOrganizerFilterList: [String] {
+        excludedOrganizerFiltersRaw
+            .split { $0 == "\n" || $0 == "," }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var excludedOrganizerFilterTerms: [String] {
+        excludedOrganizerFilterList.map { $0.lowercased() }
+    }
+
     private func rebuildSelectionsFromIDs() {
         // Map IDs -> indices in current calendars
         var idToIndex: [String:Int] = [:]
         for (i, c) in calendars.enumerated() { idToIndex[c.calendarIdentifier] = i }
+        if calendars.isEmpty {
+            sourceIndex = 0
+            sourceID = nil
+            targetSelections.removeAll()
+            targetIDs.removeAll()
+            return
+        }
+        // Drop selections that no longer exist in EventKit
+        targetIDs = Set(targetIDs.filter { idToIndex[$0] != nil })
         // Restore source index from sourceID if possible
         if let sid = sourceID, let idx = idToIndex[sid] { sourceIndex = idx }
         else if !calendars.isEmpty { sourceIndex = min(sourceIndex, calendars.count - 1); sourceID = calendars[sourceIndex].calendarIdentifier }
+        // Ensure selected source is never a target
+        if let sid = sourceID { targetIDs.remove(sid) }
         // Restore targets from IDs
         let restored = targetIDs.compactMap { idToIndex[$0] }
         targetSelections = Set(restored).filter { $0 != sourceIndex }
+    }
+
+    private func pruneStaleCalendarReferences() -> (removedTargets: Int, droppedRoutes: Int, trimmedRoutes: Int, removedSource: Bool) {
+        let validIDs = Set(calendars.map { $0.calendarIdentifier })
+
+        let originalTargets = targetIDs
+        targetIDs = Set(originalTargets.filter { validIDs.contains($0) })
+        let removedTargets = originalTargets.count - targetIDs.count
+
+        var removedSource = false
+        if let sid = sourceID, !validIDs.contains(sid) {
+            sourceID = nil
+            removedSource = true
+        }
+
+        var droppedRoutes = 0
+        var trimmedRoutes = 0
+        if !routes.isEmpty {
+            var cleaned: [Route] = []
+            cleaned.reserveCapacity(routes.count)
+            for route in routes {
+                guard validIDs.contains(route.sourceID) else {
+                    droppedRoutes += 1
+                    continue
+                }
+
+                var filteredTargets = Set(route.targetIDs.filter { validIDs.contains($0) })
+                filteredTargets.remove(route.sourceID)
+                guard !filteredTargets.isEmpty else {
+                    droppedRoutes += 1
+                    continue
+                }
+
+                var next = route
+                if filteredTargets != route.targetIDs {
+                    next.targetIDs = filteredTargets
+                    trimmedRoutes += 1
+                }
+                cleaned.append(next)
+            }
+            routes = cleaned
+        }
+
+        return (removedTargets: removedTargets, droppedRoutes: droppedRoutes, trimmedRoutes: trimmedRoutes, removedSource: removedSource)
     }
 
     private func indexForCalendar(id: String) -> Int? { calendars.firstIndex(where: { $0.calendarIdentifier == id }) }
@@ -251,22 +368,98 @@ struct ContentView: View {
     }
 
     // MARK: - Extracted UI sections to simplify type-checking
+    private var selectedSourceName: String {
+        guard calendars.indices.contains(sourceIndex) else { return "Not selected" }
+        return calLabel(calendars[sourceIndex])
+    }
+
+    @ViewBuilder
+    private func statusPill(
+        _ title: String,
+        systemImage: String,
+        fill: Color,
+        foreground: Color = .white
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption.weight(.bold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(fill)
+            )
+            .foregroundStyle(foreground)
+    }
+
+    @ViewBuilder
+    private func panelCard<Content: View>(
+        title: String,
+        subtitle: String? = nil,
+        symbol: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(.black)
+                    )
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            content()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.34), lineWidth: 1.2)
+        )
+    }
+
     @ViewBuilder
     private func calendarsSection() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Source calendar")
+                .font(.subheadline.weight(.semibold))
             Picker("Source", selection: $sourceIndex) {
                 ForEach(Array(calendars.indices), id: \.self) { i in
-                    Text("\(i+1): \(calLabel(calendars[i]))").tag(i)
+                    Text("\(i + 1): \(calLabel(calendars[i]))").tag(i)
                 }
             }
             .pickerStyle(.menu)
-            .frame(maxWidth: 360)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(isRunning || calendars.isEmpty)
 
-            Text("Target calendars (check one or more)")
+            Divider()
+
+            HStack {
+                Text("Target calendars")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(targetIDs.count) selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(calendars.indices), id: \.self) { i in
                         let isSource = (i == sourceIndex)
                         let binding = Binding<Bool>(
@@ -284,21 +477,40 @@ struct ContentView: View {
                             }
                         )
                         Toggle(isOn: binding) {
-                            HStack { Text("\(i+1):"); calChip(calendars[i]) }
+                            HStack(spacing: 8) {
+                                Text("\(i + 1).")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                calChip(calendars[i])
+                            }
+                            .padding(.vertical, 3)
                         }
+                        .toggleStyle(.switch)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+                        )
                         .disabled(isRunning || isSource)
+                        .opacity(isSource ? 0.5 : 1)
                     }
                 }
             }
-            .frame(height: 180)
+            .frame(minHeight: 170, maxHeight: 260)
         }
     }
 
     @ViewBuilder
     private func routesSection() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Routes (multi-source)").font(.headline)
+                Text("Routes (multi-source)")
+                    .font(.headline)
                 Spacer()
                 Button("Add from current selection") {
                     guard let sid = sourceID, !targetIDs.isEmpty else { return }
@@ -313,15 +525,20 @@ struct ContentView: View {
                     routes.append(r)
                 }
                 .disabled(isRunning || calendars.isEmpty || targetIDs.isEmpty)
+                .buttonStyle(.borderedProminent)
                 Button("Clear") { routes.removeAll() }
                     .disabled(isRunning || routes.isEmpty)
+                    .buttonStyle(.bordered)
             }
             if routes.isEmpty {
                 Text("No routes yet. Pick a Source and Targets above, then click ‘Add from current selection’.")
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
             } else {
-                ForEach($routes, id: \.id) { routeBinding in
-                    routeCard(for: routeBinding)
+                LazyVStack(spacing: 10) {
+                    ForEach($routes, id: \.id) { routeBinding in
+                        routeCard(for: routeBinding)
+                    }
                 }
             }
         }
@@ -330,131 +547,274 @@ struct ContentView: View {
     @ViewBuilder
     private func routeCard(for routeBinding: Binding<Route>) -> some View {
         let route = routeBinding.wrappedValue
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                sourceSummaryView(for: route)
-                Text("→ Targets:")
-                targetSummaryView(for: route)
-                Spacer()
-                Toggle("Private", isOn: routeBinding.privacy)
-                    .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
-                separatorDot()
-                mergeGapField(for: routeBinding)
-                Toggle("Copy desc", isOn: routeBinding.copyNotes)
-                    .disabled(isRunning || route.privacy)
-                    .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
-                Toggle("Mark Private", isOn: routeBinding.markPrivate)
-                    .disabled(isRunning)
-                    .help("If ON, attempt to mark mirrored events as Private on the server (e.g., Exchange). Titles still use your prefix and source title.")
-                overlapPicker(for: routeBinding)
-                    .disabled(isRunning)
-                Toggle("All-day", isOn: routeBinding.allDay)
-                    .disabled(isRunning)
-                    .help("Mirror all-day events for this source.")
-                separatorDot()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
+                    sourceSummaryView(for: route)
+                    targetSummaryView(for: route)
+                }
+                Spacer(minLength: 12)
                 Button(role: .destructive) { removeRoute(id: route.id) } label: { Text("Remove") }
             }
+
+            Divider()
+
+            Toggle("Private", isOn: routeBinding.privacy)
+                .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
+            Toggle("Copy description", isOn: routeBinding.copyNotes)
+                .disabled(isRunning || route.privacy)
+                .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+            Toggle("Mark mirrored events as Private", isOn: routeBinding.markPrivate)
+                .disabled(isRunning)
+                .help("If ON, attempt to mark mirrored events as Private on the server (e.g., Exchange). Titles still use your prefix and source title.")
+            Toggle("Mirror all-day events for this route", isOn: routeBinding.allDay)
+                .disabled(isRunning)
+                .help("Mirror all-day events for this source.")
+
+            HStack(spacing: 16) {
+                mergeGapField(for: routeBinding)
+                overlapPicker(for: routeBinding)
+                Spacer(minLength: 0)
+            }
         }
-        .padding(6)
-        .background(.quaternary.opacity(0.1))
-        .cornerRadius(6)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.25), lineWidth: 1.1)
+        )
     }
 
     @ViewBuilder
     private func sourceSummaryView(for route: Route) -> some View {
-        Text("Source:")
-        if let sCal = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
-            HStack(spacing: 6) {
-                Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
-                Text(calLabel(sCal)).bold()
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Source")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let sCal = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
+                HStack(spacing: 6) {
+                    Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
+                    Text(calLabel(sCal))
+                        .fontWeight(.semibold)
+                }
+            } else {
+                Text(labelForCalendar(id: route.sourceID))
+                    .fontWeight(.semibold)
             }
-        } else {
-            Text(labelForCalendar(id: route.sourceID)).bold()
         }
     }
 
     @ViewBuilder
     private func targetSummaryView(for route: Route) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(route.targetIDs.sorted(by: <), id: \.self) { tid in
-                    if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
-                        HStack(spacing: 6) {
-                            Circle().fill(calColor(tCal)).frame(width: 10, height: 10)
-                            Text(calLabel(tCal))
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Targets")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(route.targetIDs.sorted(by: <), id: \.self) { tid in
+                        if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
+                            HStack(spacing: 6) {
+                                Circle().fill(calColor(tCal)).frame(width: 9, height: 9)
+                                Text(calLabel(tCal))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                    .fill(Color.primary.opacity(0.1))
+                            )
+                        } else {
+                            Text(labelForCalendar(id: tid))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 999, style: .continuous)
+                                        .fill(Color.primary.opacity(0.1))
+                                )
                         }
-                    } else {
-                        Text(labelForCalendar(id: tid))
                     }
                 }
             }
         }
-        .frame(maxWidth: 420)
     }
 
     @ViewBuilder
     private func mergeGapField(for routeBinding: Binding<Route>) -> some View {
-        HStack(spacing: 6) {
-            Text("Merge gap:")
+        HStack(spacing: 8) {
+            Text("Merge gap")
             TextField("0", value: routeBinding.mergeGapHours, formatter: Self.intFormatter)
-                .frame(width: 48)
+                .frame(width: 56)
                 .disabled(isRunning)
                 .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
             Text("h").foregroundStyle(.secondary)
         }
+        .font(.subheadline)
     }
 
     @ViewBuilder
     private func overlapPicker(for routeBinding: Binding<Route>) -> some View {
-        HStack(spacing: 6) {
-            Text("Overlap:")
+        HStack(spacing: 8) {
+            Text("Overlap")
             Picker("Overlap", selection: routeBinding.overlap) {
                 ForEach(OverlapMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
-            .frame(width: 160)
+            .frame(width: 170)
             .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
         }
-    }
-
-    @ViewBuilder
-    private func separatorDot() -> some View {
-        Text("·").foregroundStyle(.secondary)
+        .font(.subheadline)
     }
 
     private func removeRoute(id: UUID) {
         routes.removeAll { $0.id == id }
     }
 
+    private func runConfiguredRoutes(_ configuredRoutes: [Route]) async {
+        var ranAnyRoute = false
+        var skippedMissingSource = 0
+        var skippedNoTargets = 0
+
+        for r in configuredRoutes {
+            guard let sIdx = indexForCalendar(id: r.sourceID) else {
+                skippedMissingSource += 1
+                continue
+            }
+
+            let validTargets = Set(r.targetIDs.filter { tid in
+                tid != r.sourceID && indexForCalendar(id: tid) != nil
+            })
+            guard !validTargets.isEmpty else {
+                skippedNoTargets += 1
+                continue
+            }
+
+            ranAnyRoute = true
+            let prevPrivacy = hideDetails
+            let prevCopy = copyDescription
+            let prevGapH = mergeGapHours
+            let prevGapM = mergeGapMin
+            let prevOverlap = overlapMode
+            let prevAllDay = mirrorAllDay
+            let prevMarkPrivate = markPrivate
+
+            await MainActor.run {
+                sourceIndex = sIdx
+                sourceID = r.sourceID
+                targetIDs = validTargets
+                targetIDs.remove(r.sourceID)
+                hideDetails = r.privacy
+                copyDescription = r.copyNotes
+                mergeGapHours = max(0, r.mergeGapHours)
+                mergeGapMin = mergeGapHours * 60
+                overlapModeRaw = r.overlap.rawValue
+                mirrorAllDay = r.allDay
+                markPrivate = r.markPrivate
+            }
+            await runMirror()
+            await MainActor.run {
+                hideDetails = prevPrivacy
+                copyDescription = prevCopy
+                mergeGapHours = prevGapH
+                mergeGapMin = prevGapM
+                overlapModeRaw = prevOverlap.rawValue
+                mirrorAllDay = prevAllDay
+                markPrivate = prevMarkPrivate
+            }
+        }
+
+        if skippedMissingSource > 0 {
+            log("- SKIP routes with missing source calendar: \(skippedMissingSource)")
+        }
+        if skippedNoTargets > 0 {
+            log("- SKIP routes with no valid targets: \(skippedNoTargets)")
+        }
+        if !ranAnyRoute {
+            log("No valid routes to run. Refresh calendars and update your route selections.")
+        }
+    }
+
+    private func startMirrorNow() {
+        Task {
+            // New click -> reset the guard so we don't re-process
+            sessionGuard.removeAll()
+            if routes.isEmpty {
+                await runMirror()
+            } else {
+                await runConfiguredRoutes(routes)
+            }
+        }
+    }
+
     @ViewBuilder
     private func optionsSection() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Text("Days back:")
-                TextField("1", value: $daysBack, formatter: Self.intFormatter)
-                    .frame(width: 60)
-                    .disabled(isRunning)
-                Text("Days forward:")
-                TextField("7", value: $daysForward, formatter: Self.intFormatter)
-                    .frame(width: 60)
-                    .disabled(isRunning)
+        VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    HStack(spacing: 8) {
+                        Text("Days back")
+                        TextField("1", value: $daysBack, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Days forward")
+                        TextField("7", value: $daysForward, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Default merge gap")
+                        TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                        Text("h").foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("Days back")
+                        TextField("1", value: $daysBack, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Days forward")
+                        TextField("7", value: $daysForward, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Default merge gap")
+                        TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 64)
+                            .disabled(isRunning)
+                        Text("h").foregroundStyle(.secondary)
+                    }
+                }
             }
             .onChange(of: daysBack) { v in daysBack = max(0, v) }
             .onChange(of: daysForward) { v in daysForward = max(0, v) }
-            HStack(spacing: 8) {
-                Text("Default merge gap:")
-                TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
-                    .frame(width: 60)
-                    .disabled(isRunning)
-                Text("hours").foregroundStyle(.secondary)
-            }
             .onChange(of: mergeGapHours) { newVal in
                 mergeGapMin = max(0, newVal * 60)
             }
+
+            Divider()
+
             Toggle("Hide details (use \"Busy\" title)", isOn: $hideDetails)
                 .disabled(isRunning)
-
             Toggle("Copy description when mirroring", isOn: $copyDescription)
                 .disabled(isRunning || hideDetails)
             Toggle("Mark mirrored events as Private (if supported)", isOn: $markPrivate)
@@ -463,6 +823,7 @@ struct ContentView: View {
                 .disabled(isRunning)
             Toggle("Mirror accepted events only", isOn: $mirrorAcceptedOnly)
                 .disabled(isRunning)
+
             Picker("Overlap mode", selection: $overlapModeRaw) {
                 ForEach(OverlapMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode.rawValue)
@@ -471,19 +832,36 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .disabled(isRunning)
 
-            HStack(spacing: 8) {
-                Text("Title prefix:")
-                TextField("🪞 ", text: $titlePrefix)
-                    .frame(width: 72)
-                    .disabled(isRunning)
-                Text("(left blank for none)").foregroundStyle(.secondary)
-            }
-            // Insert placeholder title UI
-            HStack(spacing: 8) {
-                Text("Placeholder title:")
-                TextField("Busy", text: $placeholderTitle)
-                    .frame(width: 160)
-                    .disabled(isRunning)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text("Title prefix")
+                    TextField("🪞 ", text: $titlePrefix)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .disabled(isRunning)
+                    Text("Placeholder title")
+                    TextField("Busy", text: $placeholderTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 170)
+                        .disabled(isRunning)
+                    Text("(prefix may be blank)").foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("Title prefix")
+                        TextField("🪞 ", text: $titlePrefix)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .disabled(isRunning)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Placeholder title")
+                        TextField("Busy", text: $placeholderTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 170)
+                            .disabled(isRunning)
+                    }
+                }
             }
 
             Toggle("Limit mirroring to work hours", isOn: $filterByWorkHours)
@@ -491,15 +869,17 @@ struct ContentView: View {
                 .onChange(of: filterByWorkHours) { _ in saveSettingsToDefaults() }
 
             if filterByWorkHours {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text("Start hour:")
+                        Text("Start hour")
                         TextField("9", value: $workHoursStart, formatter: Self.hourFormatter)
-                            .frame(width: 48)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
                             .disabled(isRunning)
-                        Text("End hour:")
+                        Text("End hour")
                         TextField("17", value: $workHoursEnd, formatter: Self.hourFormatter)
-                            .frame(width: 48)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
                             .disabled(isRunning)
                         Text("(local time)").foregroundStyle(.secondary)
                     }
@@ -519,13 +899,14 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Skip source titles (one per line)")
+                    .font(.subheadline.weight(.semibold))
                 TextEditor(text: $excludedTitleFiltersRaw)
                     .font(.body)
-                    .frame(minHeight: 80)
+                    .frame(minHeight: 82)
                     .disabled(isRunning)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.3))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.22))
                     )
                 Text("Matches are case-insensitive and apply before mirroring.")
                     .foregroundStyle(.secondary)
@@ -533,68 +914,40 @@ struct ContentView: View {
             }
             .onChange(of: excludedTitleFiltersRaw) { _ in saveSettingsToDefaults() }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Skip organizers (name or email, one per line)")
+                    .font(.subheadline.weight(.semibold))
+                TextEditor(text: $excludedOrganizerFiltersRaw)
+                    .font(.body)
+                    .frame(minHeight: 82)
+                    .disabled(isRunning)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.22))
+                    )
+                Text("Checks organizer name, email, or URL. Case-insensitive.")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+            }
+            .onChange(of: excludedOrganizerFiltersRaw) { _ in saveSettingsToDefaults() }
+
+            Divider()
+
             Toggle("Write to calendars (disable for Dry-Run)", isOn: $writeEnabled)
                 .disabled(isRunning)
-
-            // Insert auto-delete toggle after writeEnabled
             Toggle("Auto-delete mirrors if source is removed", isOn: $autoDeleteMissing)
                 .disabled(isRunning)
-            HStack(spacing: 12) {
+
+            HStack(spacing: 10) {
                 Button("Export Settings…") { exportSettings() }
                 Button("Import Settings…") { importSettings() }
-            }
-            .padding(.vertical, 4)
-
-            HStack {
-                Button(isRunning ? "Running…" : "Mirror Now") {
-                    Task {
-                        // New click -> reset the guard so we don't re-process
-                        sessionGuard.removeAll()
-                        if routes.isEmpty {
-                            await runMirror()
-                        } else {
-                            for r in routes {
-                                // Resolve source index and target IDs for this route
-                                if let sIdx = indexForCalendar(id: r.sourceID) {
-                                    // Save globals
-                                    let prevPrivacy = hideDetails
-                                    let prevCopy = copyDescription
-                                    let prevGapH = mergeGapHours
-                                    let prevGapM = mergeGapMin
-                                    let prevOverlap = overlapMode
-                                    let prevAllDay = mirrorAllDay
-                                    // Apply per-route state changes on MainActor
-                                    await MainActor.run {
-                                        sourceIndex = sIdx
-                                        sourceID = r.sourceID
-                                        targetIDs = r.targetIDs
-                                        // Belt-and-suspenders: ensure source is not in targets even if UI state is stale
-                                        targetIDs.remove(r.sourceID)
-                                        hideDetails = r.privacy
-                                        copyDescription = r.copyNotes
-                                        mergeGapHours = max(0, r.mergeGapHours)
-                                        mergeGapMin = mergeGapHours * 60
-                                        overlapModeRaw = r.overlap.rawValue
-                                        mirrorAllDay = r.allDay
-                                        markPrivate = r.markPrivate
-                                    }
-                                    await runMirror()
-                                    await MainActor.run {
-                                        // Restore globals
-                                        hideDetails = prevPrivacy
-                                        copyDescription = prevCopy
-                                        mergeGapHours = prevGapH
-                                        mergeGapMin = prevGapM
-                                        overlapModeRaw = prevOverlap.rawValue
-                                        mirrorAllDay = prevAllDay
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Button("Reveal Log File") {
+                    NSWorkspace.shared.activateFileViewerSelecting([AppLogStore.logFileURL])
                 }
-                .disabled(!canRunMirrorNow)
+                Spacer(minLength: 0)
+            }
 
+            HStack(spacing: 10) {
                 Button("Cleanup Placeholders") {
                     if writeEnabled {
                         // Real delete: ask for confirmation first
@@ -620,51 +973,139 @@ struct ContentView: View {
                     }
                 }
                 .disabled(isRunning)
+                .buttonStyle(.bordered)
 
                 Button("Refresh Calendars") {
-                    reloadCalendars()
+                    reloadCalendars(forceResetStore: true)
                 }
                 .disabled(isRunning)
+                .buttonStyle(.bordered)
 
-                Spacer()
+                Spacer(minLength: 0)
             }
         }
     }
 
     @ViewBuilder
     private func logSection() -> some View {
-        Text("Log")
         TextEditor(text: $logText)
             .font(.system(.body, design: .monospaced))
             .frame(minHeight: 180)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.22))
+            )
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("BusyMirror").font(.title2).bold()
-                Spacer()
-                Button(hasAccess ? "Recheck Permission" : "Request Calendar Access") {
-                    requestAccess()
-                }
-                .disabled(isRunning)
-            }
-            Divider()
+        GeometryReader { proxy in
+            let compactLayout = proxy.size.width < 1220
+            ZStack {
+                Color(nsColor: .underPageBackgroundColor)
+                    .ignoresSafeArea()
 
-            if !hasAccess {
-                Text("Calendar access not granted yet. Click “Request Calendar Access”.")
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(alignment: .top, spacing: 24) {
-                    calendarsSection()
-                    optionsSection()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("BusyMirror")
+                                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                                Text("Mirror availability across calendars")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            HStack(spacing: 8) {
+                                if hasAccess {
+                                    statusPill("\(calendars.count) calendars", systemImage: "calendar", fill: .black)
+                                } else {
+                                    statusPill("No access", systemImage: "lock.fill", fill: .red)
+                                }
+                                Button {
+                                    guard !isRunning else { return }
+                                    writeEnabled.toggle()
+                                    log("Mode: \(writeEnabled ? "WRITE" : "DRY-RUN")")
+                                } label: {
+                                    statusPill(writeEnabled ? "WRITE" : "DRY RUN", systemImage: writeEnabled ? "pencil" : "eye", fill: writeEnabled ? .red : .black)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Click to toggle write mode.")
+                                if isRunning {
+                                    statusPill("RUNNING", systemImage: "arrow.triangle.2.circlepath", fill: .orange)
+                                }
+                                Button(isRunning ? "Running…" : "Mirror Now") {
+                                    startMirrorNow()
+                                }
+                                .disabled(!canRunMirrorNow)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                                Button(hasAccess ? "Recheck Permission" : "Request Calendar Access") {
+                                    requestAccess()
+                                }
+                                .disabled(isRunning)
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if !hasAccess {
+                            panelCard(
+                                title: "Calendar Permission Needed",
+                                subtitle: "BusyMirror needs access to read and mirror your events.",
+                                symbol: "lock.fill"
+                            ) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("Calendar access is not granted yet. Use the button above to continue.")
+                                        .foregroundStyle(.secondary)
+                                    Button("Request Calendar Access") {
+                                        requestAccess()
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                }
+                            }
+                        } else if compactLayout {
+                            panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
+                                calendarsSection()
+                            }
+                            panelCard(title: "General Settings", subtitle: "Mirroring rules, filters, and actions", symbol: "slider.horizontal.3") {
+                                optionsSection()
+                            }
+                            panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
+                                routesSection()
+                            }
+                            panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
+                                logSection()
+                            }
+                        } else {
+                            HStack(alignment: .top, spacing: 14) {
+                                VStack(spacing: 12) {
+                                    panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
+                                        calendarsSection()
+                                    }
+                                    panelCard(title: "General Settings", subtitle: "Mirroring rules, filters, and actions", symbol: "slider.horizontal.3") {
+                                        optionsSection()
+                                    }
+                                }
+                                .frame(width: 430, alignment: .topLeading)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                                VStack(spacing: 12) {
+                                    panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
+                                        routesSection()
+                                    }
+                                    panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
+                                        logSection()
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        }
+                    }
+                    .padding(18)
+                    .frame(maxWidth: 1480, alignment: .topLeading)
+                    .frame(minHeight: proxy.size.height, alignment: .topLeading)
                 }
-                routesSection()
-                logSection()
             }
         }
-        .padding(16)
         .confirmationDialog(
             "Delete mirrored placeholders?",
             isPresented: $confirmCleanup,
@@ -693,6 +1134,8 @@ struct ContentView: View {
             Text("This will remove events identified as mirrored (by URL prefix or title prefix ‘\(titlePrefix)’) within the current window (Days back/forward) from the selected target calendars.")
         }
         .onAppear {
+            AppLogStore.append("=== BusyMirror launch ===")
+            log("Log file: \(AppLogStore.logFileURL.path)")
             requestAccess()
             loadSettingsFromDefaults()
             mergeGapMin = max(0, mergeGapHours * 60)
@@ -736,7 +1179,9 @@ struct ContentView: View {
     // MARK: - CLI support
     func tryRunCLIIfPresent() {
         let args = CommandLine.arguments
-        guard let routesIdx = args.firstIndex(of: "--routes") else { return }
+        let routesIdx = args.firstIndex(of: "--routes")
+        let runSavedRoutes = args.contains("--run-saved-routes")
+        guard routesIdx != nil || runSavedRoutes else { return }
         isCLIRun = true
 
         func boolArg(_ name: String, default def: Bool) -> Bool {
@@ -772,10 +1217,20 @@ struct ContentView: View {
             default: break
             }
         }
+        // Optional filters via CLI
+        if let tFilters = strArg("--exclude-titles") { excludedTitleFiltersRaw = tFilters }
+        if let oFilters = strArg("--exclude-organizers") { excludedOrganizerFiltersRaw = oFilters }
 
-        let routesSpec = (routesIdx+1 < args.count) ? args[routesIdx+1] : ""
+        let routesSpec = {
+            guard let routesIdx else { return "" }
+            return (routesIdx + 1 < args.count) ? args[routesIdx + 1] : ""
+        }()
         let routeParts = routesSpec.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
-        log("CLI: routes=\(routesSpec)")
+        if runSavedRoutes {
+            log("CLI: run saved routes")
+        } else {
+            log("CLI: routes=\(routesSpec)")
+        }
         Task {
             // Wait up to ~10s for calendars to load
             for _ in 0..<50 {
@@ -788,26 +1243,46 @@ struct ContentView: View {
                 return
             }
 
-            for part in routeParts where !part.isEmpty {
-                // Format: "S->T1,T2,T3" (indices are 1-based as shown in UI)
-                let lr = part.split(separator: "->", maxSplits: 1).map { String($0) }
-                guard lr.count == 2, let s1 = Int(lr[0].trimmingCharacters(in: .whitespaces)) else { continue }
-                let srcIdx0 = max(0, s1 - 1)
-                let tgtIdxs0: [Int] = lr[1].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces))?.advanced(by: -1) }.filter { $0 >= 0 }
-                if srcIdx0 >= calendars.count { continue }
-                await MainActor.run {
-                    sourceIndex = srcIdx0
-                    sourceID = calendars[srcIdx0].calendarIdentifier
-                    targetSelections = Set(tgtIdxs0)
-                    targetIDs = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil })
-                }
-
-                if boolArg("--cleanup-only", default: false) {
-                    log("CLI: cleanup route \(part)")
-                    await runCleanup()
+            if runSavedRoutes {
+                if routes.isEmpty {
+                    log("CLI: no saved routes; aborting")
+                } else if boolArg("--cleanup-only", default: false) {
+                    for r in routes {
+                        if let sIdx = indexForCalendar(id: r.sourceID) {
+                            await MainActor.run {
+                                sourceIndex = sIdx
+                                sourceID = r.sourceID
+                                targetIDs = r.targetIDs
+                            }
+                            log("CLI: cleanup saved route \(r.sourceID)")
+                            await runCleanup()
+                        }
+                    }
                 } else {
-                    log("CLI: mirror route \(part)")
-                    await runMirror()
+                    await runConfiguredRoutes(routes)
+                }
+            } else {
+                for part in routeParts where !part.isEmpty {
+                    // Format: "S->T1,T2,T3" (indices are 1-based as shown in UI)
+                    let lr = part.split(separator: "->", maxSplits: 1).map { String($0) }
+                    guard lr.count == 2, let s1 = Int(lr[0].trimmingCharacters(in: .whitespaces)) else { continue }
+                    let srcIdx0 = max(0, s1 - 1)
+                    let tgtIdxs0: [Int] = lr[1].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces))?.advanced(by: -1) }.filter { $0 >= 0 }
+                    if srcIdx0 >= calendars.count { continue }
+                    await MainActor.run {
+                        sourceIndex = srcIdx0
+                        sourceID = calendars[srcIdx0].calendarIdentifier
+                        targetSelections = Set(tgtIdxs0)
+                        targetIDs = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil })
+                    }
+
+                    if boolArg("--cleanup-only", default: false) {
+                        log("CLI: cleanup route \(part)")
+                        await runCleanup()
+                    } else {
+                        log("CLI: mirror route \(part)")
+                        await runMirror()
+                    }
                 }
             }
             if CommandLine.arguments.contains("--exit") || isCLIRun {
@@ -848,19 +1323,39 @@ struct ContentView: View {
     }
     
     @MainActor
-    func reloadCalendars() {
+    func reloadCalendars(forceResetStore: Bool = false) {
+        if forceResetStore {
+            // EventKit can cache stale/inactive calendars; recreate store for a hard refresh.
+            store = EKEventStore()
+        }
         let fetched = store.calendars(for: .event)
         calendars = sortedCalendars(fetched)
+        let pruned = pruneStaleCalendarReferences()
         // Initialize IDs on first load
         if sourceID == nil, let first = calendars.first { sourceID = first.calendarIdentifier }
         // Rebuild index-based selections from stored IDs
         rebuildSelectionsFromIDs()
+        if pruned.removedTargets > 0 || pruned.droppedRoutes > 0 || pruned.trimmedRoutes > 0 || pruned.removedSource {
+            log("Pruned stale calendars: source removed=\(pruned.removedSource ? "yes" : "no"), selected targets removed=\(pruned.removedTargets), routes dropped=\(pruned.droppedRoutes), routes trimmed=\(pruned.trimmedRoutes).")
+            saveSettingsToDefaults()
+        }
         log("Loaded \(calendars.count) calendars.")
     }
     
     // MARK: - Mirror engine (EventKit)
     func runMirror() async {
-        guard hasAccess, !calendars.isEmpty else { return }
+        guard hasAccess else {
+            log("Cannot mirror: calendar access is not granted.")
+            return
+        }
+        guard !calendars.isEmpty else {
+            log("Cannot mirror: no calendars loaded. Try Refresh Calendars.")
+            return
+        }
+        guard calendars.indices.contains(sourceIndex) else {
+            log("Cannot mirror: selected source is invalid.")
+            return
+        }
         isRunning = true
         defer { isRunning = false }
 
@@ -876,6 +1371,10 @@ struct ContentView: View {
         if targetSet.contains(srcCal.calendarIdentifier) { log("- WARN: source is present in targets, removing: \(srcName)") }
         let targetSetNoSrc = targetSet.subtracting([srcCal.calendarIdentifier])
         let targets = calendars.filter { targetSetNoSrc.contains($0.calendarIdentifier) }
+        if targets.isEmpty {
+            log("No target calendars selected. Choose at least one target or add a route with valid targets.")
+            return
+        }
 
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
@@ -902,11 +1401,13 @@ struct ContentView: View {
         var srcBlocks: [Block] = []
         var skippedMirrors = 0
         let titleFilters = excludedTitleFilterTerms
+        let organizerFilters = excludedOrganizerFilterTerms
         let enforceWorkHours = filterByWorkHours && workHoursEnd > workHoursStart
         let allowedStartMinutes = workHoursStart * 60
         let allowedEndMinutes = workHoursEnd * 60
         var skippedWorkHours = 0
         var skippedTitles = 0
+        var skippedOrganizers = 0
         var skippedStatus = 0
         for ev in srcEvents {
             if mirrorAcceptedOnly, ev.hasAttendees {
@@ -932,6 +1433,10 @@ struct ContentView: View {
                 skippedTitles += 1
                 continue
             }
+            if shouldSkipOrganizer(event: ev, filters: organizerFilters) {
+                skippedOrganizers += 1
+                continue
+            }
             if SKIP_ALL_DAY_DEFAULT == true && mirrorAllDay == false && ev.isAllDay { continue }
             if isMirrorEvent(ev, prefix: titlePrefix, placeholder: placeholderTitle) {
                 // Aggregate skip count for mirrored-on-source
@@ -952,6 +1457,9 @@ struct ContentView: View {
         }
         if skippedTitles > 0 {
             log("- SKIP title filter: \(skippedTitles) event(s)")
+        }
+        if skippedOrganizers > 0 {
+            log("- SKIP organizer filter: \(skippedOrganizers) event(s)")
         }
         if skippedStatus > 0 {
             log("- SKIP non-accepted status: \(skippedStatus) event(s)")
@@ -1018,7 +1526,7 @@ struct ContentView: View {
                 }
             }
 
-            func createOrUpdateIfNeeded(_ blk: Block) {
+            func createOrUpdateIfNeeded(_ blk: Block) async {
                 // Cross-route loop guard: skip if this (source occurrence -> target) was handled earlier this click
                 let gKey = guardKey(for: blk, targetID: tgt.calendarIdentifier)
                 if sessionGuard.contains(gKey) {
@@ -1059,7 +1567,9 @@ struct ContentView: View {
                         warnedPrivateUnsupported = true
                     }
                     do {
-                        try store.save(existingByTime, span: .thisEvent, commit: true)
+                        try await MainActor.run {
+                            try store.save(existingByTime, span: .thisEvent, commit: true)
+                        }
                         log("✓ UPDATED [\(srcName) -> \(tgtName)] (by time) \(blk.start) -> \(blk.end)")
                         placeholderSet.insert(exactTimeKey)
                         placeholdersByTime[exactTimeKey] = existingByTime
@@ -1106,7 +1616,9 @@ struct ContentView: View {
                             warnedPrivateUnsupported = true
                         }
                         do {
-                            try store.save(existing, span: .thisEvent, commit: true)
+                            try await MainActor.run {
+                                try store.save(existing, span: .thisEvent, commit: true)
+                            }
                             log("✓ UPDATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
                             placeholderSet.insert("\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
                             let timeKey = "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
@@ -1151,7 +1663,9 @@ struct ContentView: View {
                     warnedPrivateUnsupported = true
                 }
                 do {
-                    try store.save(newEv, span: .thisEvent, commit: true)
+                    try await MainActor.run {
+                        try store.save(newEv, span: .thisEvent, commit: true)
+                    }
                     created += 1
                     log("✓ CREATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
                     placeholderSet.insert(k)
@@ -1171,13 +1685,13 @@ struct ContentView: View {
             for b in baseBlocks {
                 switch overlapMode {
                 case .allow:
-                    createOrUpdateIfNeeded(b)
+                    await createOrUpdateIfNeeded(b)
                 case .skipCovered:
                     if fullyCovered(occupied, block: b, tolMin: SAME_TIME_TOL_MIN) {
                         log("- SKIP covered [\(srcName) -> \(tgtName)] \(b.start) -> \(b.end)")
                         skipped += 1
                     } else {
-                        createOrUpdateIfNeeded(b)
+                        await createOrUpdateIfNeeded(b)
                     }
                 case .fillGaps:
                     let gaps = gapsWithin(occupied, in: b)
@@ -1185,7 +1699,7 @@ struct ContentView: View {
                         log("- SKIP no gaps [\(srcName) -> \(tgtName)] \(b.start) -> \(b.end)")
                         skipped += 1
                     } else {
-                        for g in gaps { createOrUpdateIfNeeded(g) }
+                        for g in gaps { await createOrUpdateIfNeeded(g) }
                     }
                 }
             }
@@ -1195,6 +1709,7 @@ struct ContentView: View {
             // also cleans up legacy mirrors that lack a mirror URL (by time).
             if autoDeleteMissing {
                 let trackByID = (mergeGapMin == 0)
+                let isMultiRouteRun = !routes.isEmpty
                 // Build valid occurrence keys from current source blocks (when trackByID)
                 let validOccKeys: Set<String> = Set(baseBlocks.compactMap { blk in
                     guard trackByID, let sid = blk.srcEventID else { return nil }
@@ -1215,30 +1730,60 @@ struct ContentView: View {
                 }
 
                 var removed = 0
+                var skippedOtherSource = 0
+                var skippedLegacyNoURL = 0
                 for ev in byID.values {
                     let parsed = parseMirrorURL(ev.url)
                     var shouldDelete = false
-                    if let sid = parsed.srcEventID, let occ = parsed.occ {
-                        let k = "\(sid)|\(occ.timeIntervalSince1970)"
-                        // If key not present among current source instances, delete
-                        if !validOccKeys.contains(k) { shouldDelete = true }
-                    } else if trackByID {
-                        // Legacy fallback: no URL -> compare exact time window membership
+                    if let sourceCalID = parsed.sourceCalID, !sourceCalID.isEmpty {
+                        // Only clean up placeholders that belong to this route's source calendar.
+                        if sourceCalID != srcCal.calendarIdentifier {
+                            skippedOtherSource += 1
+                            continue
+                        }
+                        if let sid = parsed.srcEventID, let occ = parsed.occ {
+                            let k = "\(sid)|\(occ.timeIntervalSince1970)"
+                            // If key not present among current source instances, delete
+                            if !validOccKeys.contains(k) { shouldDelete = true }
+                        } else if trackByID {
+                            // Legacy-ish URL payload for this source: compare exact time window membership.
+                            if let s = ev.startDate, let e = ev.endDate {
+                                let tk = "\(s.timeIntervalSince1970)|\(e.timeIntervalSince1970)"
+                                if !validTimeKeys.contains(tk) { shouldDelete = true }
+                            }
+                        }
+                    } else if trackByID && !isMultiRouteRun {
+                        // Legacy fallback without URL source only in single-source runs.
                         if let s = ev.startDate, let e = ev.endDate {
                             let tk = "\(s.timeIntervalSince1970)|\(e.timeIntervalSince1970)"
                             if !validTimeKeys.contains(tk) { shouldDelete = true }
                         }
+                    } else if trackByID && isMultiRouteRun {
+                        // In multi-route runs, avoid deleting URL-less placeholders that may belong to another source.
+                        skippedLegacyNoURL += 1
+                        continue
                     }
                     if shouldDelete {
                         if !writeEnabled {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
                         } else {
-                            do { try store.remove(ev, span: .thisEvent, commit: true); removed += 1 }
+                            do {
+                                try await MainActor.run {
+                                    try store.remove(ev, span: .thisEvent, commit: true)
+                                }
+                                removed += 1
+                            }
                             catch { log("Delete failed: \(error.localizedDescription)") }
                         }
                     }
                 }
                 if removed > 0 { log("[Cleanup missing for \(tgtName)] deleted=\(removed)") }
+                if skippedOtherSource > 0 {
+                    log("- INFO cleanup skipped \(skippedOtherSource) placeholders from other source routes on \(tgtName)")
+                }
+                if skippedLegacyNoURL > 0 {
+                    log("- INFO cleanup skipped \(skippedLegacyNoURL) legacy placeholders without source URL on \(tgtName)")
+                }
             }
         }
     }
@@ -1256,6 +1801,7 @@ private struct SettingsPayload: Codable {
     var workHoursStart: Int = 9
     var workHoursEnd: Int = 17
     var excludedTitleFilters: [String] = []
+    var excludedOrganizerFilters: [String]? = nil
     var mirrorAcceptedOnly: Bool = false
     var overlapMode: String
     var titlePrefix: String
@@ -1283,6 +1829,7 @@ private struct SettingsPayload: Codable {
             workHoursStart: workHoursStart,
             workHoursEnd: workHoursEnd,
             excludedTitleFilters: excludedTitleFilterList,
+            excludedOrganizerFilters: excludedOrganizerFilterList,
             mirrorAcceptedOnly: mirrorAcceptedOnly,
             overlapMode: overlapMode.rawValue,
             titlePrefix: titlePrefix,
@@ -1309,6 +1856,9 @@ private struct SettingsPayload: Codable {
         workHoursStart = s.workHoursStart
         workHoursEnd = s.workHoursEnd
         excludedTitleFiltersRaw = s.excludedTitleFilters.joined(separator: "\n")
+        if let orgs = s.excludedOrganizerFilters {
+            excludedOrganizerFiltersRaw = orgs.joined(separator: "\n")
+        }
         mirrorAcceptedOnly = s.mirrorAcceptedOnly
         overlapMode = OverlapMode(rawValue: s.overlapMode) ?? .allow
         titlePrefix = s.titlePrefix
@@ -1453,6 +2003,47 @@ private struct SettingsPayload: Codable {
         }
     }
 
+    // Organizer filters
+    private func organizerEmail(_ participant: EKParticipant?) -> String? {
+        guard let url = participant?.url else { return nil }
+        if url.scheme?.lowercased() == "mailto" {
+            let abs = url.absoluteString
+            if abs.lowercased().hasPrefix("mailto:") {
+                return String(abs.dropFirst("mailto:".count))
+            }
+            return abs
+        }
+        return url.absoluteString
+    }
+
+    private func organizerStrings(for event: EKEvent) -> [String] {
+        var out: [String] = []
+        if let org = event.organizer {
+            if let n = org.name, !n.isEmpty { out.append(n) }
+            if let e = organizerEmail(org), !e.isEmpty { out.append(e) }
+        }
+        // Fallback: some providers may not populate organizer; try chair attendee
+        if out.isEmpty, let attendees = event.attendees {
+            if let chair = attendees.first(where: { $0.participantRole == .chair }) {
+                if let n = chair.name, !n.isEmpty { out.append(n) }
+                if let e = organizerEmail(chair), !e.isEmpty { out.append(e) }
+            }
+        }
+        return out
+    }
+
+    private func shouldSkipOrganizer(event: EKEvent, filters: [String]) -> Bool {
+        guard !filters.isEmpty else { return false }
+        let vals = organizerStrings(for: event).map { $0.lowercased() }
+        guard !vals.isEmpty else { return false }
+        for token in filters {
+            for v in vals {
+                if v.contains(token) { return true }
+            }
+        }
+        return false
+    }
+
     private func clampWorkHours() {
         let clampedStart = min(max(workHoursStart, 0), 23)
         if clampedStart != workHoursStart { workHoursStart = clampedStart }
@@ -1466,7 +2057,10 @@ private struct SettingsPayload: Codable {
 
     // MARK: - Logging
     func log(_ s: String) {
-        logText.append("\n" + s)
+        AppLogStore.append(s)
+        DispatchQueue.main.async {
+            logText.append("\n" + s)
+        }
     }
     
     // MARK: - Block helpers
@@ -1543,7 +2137,12 @@ private struct SettingsPayload: Codable {
             if !writeEnabled {
                 log("~ WOULD DELETE [\(tgt.title)] \(ev.startDate ?? todayStart) -> \(ev.endDate ?? todayStart)")
             } else {
-                do { try store.remove(ev, span: .thisEvent, commit: true); delCount += 1 }
+                do {
+                    try await MainActor.run {
+                        try store.remove(ev, span: .thisEvent, commit: true)
+                    }
+                    delCount += 1
+                }
                 catch { log("Delete failed: \(error.localizedDescription)") }
             }
         }

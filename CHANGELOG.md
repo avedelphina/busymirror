@@ -1,10 +1,20 @@
 # Changelog
-# Changelog
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.4] - 2026-03-13
+- Fix: route-scoped cleanup no longer deletes placeholders created by other source routes during the same multi-route run.
+- Fix: stale calendars are pruned from saved selections and routes during refresh, and refresh now recreates `EKEventStore` for a hard reload.
+- UX: the top bar `DRY RUN` / `WRITE` status pill is clickable, the left column keeps its own height on desktop, and the app can reveal its log file from the UI.
+- Logging: mirror activity is persisted to `~/Library/Logs/BusyMirror/BusyMirror.log` with simple rotation to `BusyMirror.previous.log`.
+- CLI: add `--run-saved-routes` so scheduled `launchd` runs can use the saved UI routes instead of fragile index-based route definitions.
+
 ## [1.3.1] - 2025-10-13
 - Fix: auto-delete of mirrored placeholders when the source is removed now works even if no source instances remain in the window. Also cleans legacy mirrors without URLs by matching exact times.
+
+## [1.3.2] - 2025-10-13
+- New: Organizer filters — skip events by organizer (name/email/URL). UI under Options and persisted in settings.
+- CLI: add `--exclude-organizers` (and `--exclude-titles`) flags to control filters when running headless.
 
 ## [1.2.4] - 2025-10-10
 - Fix: enable “Mirror Now” when Routes are defined even if no Source/Targets are checked in the main window. Button now enables if either routes exist or a manual selection is present.
