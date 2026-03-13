@@ -19,6 +19,8 @@ private enum AppLogStore {
 
     static let logFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.log", isDirectory: false)
     private static let archivedLogFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.previous.log", isDirectory: false)
+    static let launchdStdoutURL = logDirectoryURL.appendingPathComponent("launchd.stdout.log", isDirectory: false)
+    static let launchdStderrURL = logDirectoryURL.appendingPathComponent("launchd.stderr.log", isDirectory: false)
 
     private static let timestampFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -56,6 +58,19 @@ private enum AppLogStore {
 enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     case allow, skipCovered, fillGaps
     var id: String { rawValue }
+}
+
+enum ScheduleMode: String, CaseIterable, Identifiable {
+    case hourly, daily, weekdays
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .hourly: return "Hourly"
+        case .daily: return "Daily"
+        case .weekdays: return "Weekdays"
+        }
+    }
 }
 
 // Calendar label helper to disambiguate identical names
@@ -209,6 +224,11 @@ struct ContentView: View {
     @AppStorage("filterByWorkHours") private var filterByWorkHours: Bool = false
     @AppStorage("workHoursStart") private var workHoursStart: Int = 9
     @AppStorage("workHoursEnd") private var workHoursEnd: Int = 17
+    @AppStorage("scheduleMode") private var scheduleModeRaw: String = ScheduleMode.weekdays.rawValue
+    @AppStorage("scheduleHour") private var scheduleHour: Int = 8
+    @AppStorage("scheduleMinute") private var scheduleMinute: Int = 0
+    @AppStorage("scheduleWeekdaysOnly") private var scheduleWeekdaysOnly: Bool = true
+    @AppStorage("scheduleIntervalHours") private var scheduleIntervalHours: Int = 1
     @AppStorage("excludedTitleFilters") private var excludedTitleFiltersRaw: String = ""
     @AppStorage("excludedOrganizerFilters") private var excludedOrganizerFiltersRaw: String = ""
     @AppStorage("mirrorAcceptedOnly") private var mirrorAcceptedOnly: Bool = false
@@ -252,6 +272,132 @@ struct ContentView: View {
         f.maximum = 24
         return f
     }()
+
+    private static let smallIntFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .none
+        f.minimum = 1
+        f.maximum = 24
+        return f
+    }()
+
+    private var scheduleMode: ScheduleMode {
+        get { ScheduleMode(rawValue: scheduleModeRaw) ?? (scheduleWeekdaysOnly ? .weekdays : .daily) }
+        nonmutating set { scheduleModeRaw = newValue.rawValue }
+    }
+
+    private var launchAgentLabel: String { "com.cqrenet.BusyMirror.saved-routes" }
+
+    private var launchAgentURL: URL {
+        let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+        return base.appendingPathComponent("LaunchAgents/\(launchAgentLabel).plist", isDirectory: false)
+    }
+
+    private var hasInstalledSchedule: Bool {
+        FileManager.default.fileExists(atPath: launchAgentURL.path)
+    }
+
+    private var scheduleSummary: String {
+        switch scheduleMode {
+        case .hourly:
+            return "every \(scheduleIntervalHours) hour" + (scheduleIntervalHours == 1 ? "" : "s")
+        case .daily:
+            return String(format: "%02d:%02d daily", scheduleHour, scheduleMinute)
+        case .weekdays:
+            return String(format: "%02d:%02d weekdays", scheduleHour, scheduleMinute)
+        }
+    }
+
+    private func clampScheduleTime() {
+        let nextHour = min(max(scheduleHour, 0), 23)
+        if nextHour != scheduleHour { scheduleHour = nextHour }
+        let nextMinute = min(max(scheduleMinute, 0), 59)
+        if nextMinute != scheduleMinute { scheduleMinute = nextMinute }
+        let nextInterval = min(max(scheduleIntervalHours, 1), 24)
+        if nextInterval != scheduleIntervalHours { scheduleIntervalHours = nextInterval }
+    }
+
+    private func launchAgentScheduleProperties() -> [String: Any] {
+        switch scheduleMode {
+        case .hourly:
+            return ["StartInterval": scheduleIntervalHours * 3600]
+        case .daily:
+            return ["StartCalendarInterval": ["Hour": scheduleHour, "Minute": scheduleMinute]]
+        case .weekdays:
+            let intervals: [[String: Int]] = (1...5).map { weekday in
+                ["Hour": scheduleHour, "Minute": scheduleMinute, "Weekday": weekday]
+            }
+            return ["StartCalendarInterval": intervals]
+        }
+    }
+
+    private func launchCtl(_ arguments: [String], allowFailure: Bool = false) throws -> String {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        proc.arguments = arguments
+        let output = Pipe()
+        proc.standardOutput = output
+        proc.standardError = output
+        try proc.run()
+        proc.waitUntilExit()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if proc.terminationStatus != 0 && !allowFailure {
+            throw NSError(
+                domain: "BusyMirrorLaunchCtl",
+                code: Int(proc.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: text.isEmpty ? "launchctl failed (\(proc.terminationStatus))" : text]
+            )
+        }
+        return text
+    }
+
+    private func installSchedule() {
+        guard !routes.isEmpty else {
+            log("Cannot install schedule: no saved routes.")
+            return
+        }
+        clampScheduleTime()
+        do {
+            let fm = FileManager.default
+            try fm.createDirectory(at: launchAgentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createDirectory(at: AppLogStore.logDirectoryURL, withIntermediateDirectories: true)
+
+            let executablePath = Bundle.main.executableURL?.path
+                ?? Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/BusyMirror").path
+            let plist: [String: Any] = [
+                "Label": launchAgentLabel,
+                "ProgramArguments": [executablePath, "--run-saved-routes", "--write", "1", "--exit"],
+                "RunAtLoad": false,
+                "StandardOutPath": AppLogStore.launchdStdoutURL.path,
+                "StandardErrorPath": AppLogStore.launchdStderrURL.path,
+                "WorkingDirectory": NSHomeDirectory()
+            ].merging(launchAgentScheduleProperties()) { _, new in new }
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            try data.write(to: launchAgentURL, options: .atomic)
+
+            let domain = "gui/\(getuid())"
+            _ = try? launchCtl(["bootout", domain, launchAgentURL.path], allowFailure: true)
+            _ = try launchCtl(["bootstrap", domain, launchAgentURL.path])
+            log("Installed schedule at \(scheduleSummary). LaunchAgent: \(launchAgentURL.path)")
+        } catch {
+            log("Failed to install schedule: \(error.localizedDescription)")
+        }
+    }
+
+    private func removeSchedule() {
+        do {
+            let domain = "gui/\(getuid())"
+            _ = try? launchCtl(["bootout", domain, launchAgentURL.path], allowFailure: true)
+            if FileManager.default.fileExists(atPath: launchAgentURL.path) {
+                try FileManager.default.removeItem(at: launchAgentURL)
+            }
+            log("Removed schedule: \(launchAgentURL.path)")
+        } catch {
+            log("Failed to remove schedule: \(error.localizedDescription)")
+        }
+    }
 
     // Deterministic ordering to keep indices stable across runs
     private func sortedCalendars(_ cals: [EKCalendar]) -> [EKCalendar] {
@@ -946,6 +1092,74 @@ struct ContentView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Scheduled runs")
+                    .font(.subheadline.weight(.semibold))
+                HStack(spacing: 8) {
+                    Picker("Mode", selection: Binding(
+                        get: { scheduleMode },
+                        set: { newValue in
+                            scheduleMode = newValue
+                            scheduleWeekdaysOnly = (newValue == .weekdays)
+                        }
+                    )) {
+                        ForEach(ScheduleMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(isRunning)
+                    Spacer(minLength: 0)
+                }
+                if scheduleMode == .hourly {
+                    HStack(spacing: 8) {
+                        Text("Every")
+                        TextField("1", value: $scheduleIntervalHours, formatter: Self.smallIntFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
+                            .disabled(isRunning)
+                        Text(scheduleIntervalHours == 1 ? "hour" : "hours")
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Text("Time")
+                        TextField("8", value: $scheduleHour, formatter: Self.hourFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
+                            .disabled(isRunning)
+                        Text(":")
+                        TextField("0", value: $scheduleMinute, formatter: Self.intFormatter)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
+                            .disabled(isRunning)
+                        Spacer(minLength: 0)
+                    }
+                }
+                Text("Creates a LaunchAgent that runs the installed app with saved routes in write mode.")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                Text(hasInstalledSchedule ? "Installed: \(scheduleSummary)" : "Not installed")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install Schedule") { installSchedule() }
+                        .disabled(isRunning || routes.isEmpty)
+                    Button("Remove Schedule") { removeSchedule() }
+                        .disabled(isRunning || !hasInstalledSchedule)
+                    Button("Reveal LaunchAgent") {
+                        NSWorkspace.shared.activateFileViewerSelecting([launchAgentURL])
+                    }
+                    .disabled(!hasInstalledSchedule)
+                    Spacer(minLength: 0)
+                }
+            }
+            .onChange(of: scheduleHour) { _ in clampScheduleTime() }
+            .onChange(of: scheduleMinute) { _ in clampScheduleTime() }
+            .onChange(of: scheduleIntervalHours) { _ in clampScheduleTime() }
 
             HStack(spacing: 10) {
                 Button("Cleanup Placeholders") {

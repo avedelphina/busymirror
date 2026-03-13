@@ -2,6 +2,12 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.6] - 2026-03-13
+- Scheduling: add in-app `Scheduled runs` controls to install or remove a user `launchd` LaunchAgent from BusyMirror itself.
+- Scheduling: support `Hourly`, `Daily`, and `Weekdays` schedules; hourly mode runs saved routes via `StartInterval`.
+- UX: generate and ship a proper macOS app icon set for BusyMirror.
+- Build: bump version to 1.3.6 (build 14).
+
 ## [1.3.4] - 2026-03-13
 - Fix: route-scoped cleanup no longer deletes placeholders created by other source routes during the same multi-route run.
 - Fix: stale calendars are pruned from saved selections and routes during refresh, and refresh now recreates `EKEventStore` for a hard reload.

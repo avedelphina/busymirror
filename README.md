@@ -51,10 +51,13 @@ See `CHANGELOG.md` for notable changes.
 - In the UI, use `Reveal Log File` to open the current log directly in Finder.
 
 ## Scheduling
-- Yes. The recommended way is macOS `launchd` calling the built-in CLI with saved routes:
+- BusyMirror can create its own schedule from the app UI in `Scheduled runs`.
+- Choose `Hourly`, `Daily`, or `Weekdays`, then click `Install Schedule`.
+- The installed LaunchAgent runs:
   - `/Applications/BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit`
 - This is more stable than index-based `--routes`, because it uses the routes and per-route options you already configured in the UI.
-- A typical `launchd` job can run this on a daily or weekday schedule after you grant calendar access once in the app.
+- Hourly schedules use `launchd` `StartInterval`; daily and weekday schedules use `StartCalendarInterval`.
+- You can remove the job from the same UI with `Remove Schedule`.
 - Note: scheduled headless runs depend on Calendar permission being granted to the installed app. Because these local builds are unsigned, macOS may require re-granting permission after replacing the app bundle with a new build.
 
 ## Roadmap
