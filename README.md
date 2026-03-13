@@ -9,13 +9,16 @@ BusyMirror mirrors meetings between your calendars so your availability stays co
   - Private (hide details): mirrors placeholders with prefix + placeholder title (e.g., "🪞 Busy").
   - Mark Private: mirrors prefix + real title, but marks events Private on supported servers (best-effort).
 - DRY-RUN mode: see what would be created/updated/deleted without writing.
+- Activity Log in the app plus persistent file logging on disk.
+- In-app scheduling: install or remove a `launchd` LaunchAgent from the `Scheduled runs` section.
 - Overlap modes: `allow`, `skipCovered`, `fillGaps`.
 - Merge adjacent events with a configurable gap.
 - Time window controls (days back/forward) and Work Hours filter.
 - Accepted-only filter (mirror your accepted meetings only).
 - Cleanup of placeholders, including auto-delete of mirrors whose source disappeared.
+- Refresh Calendars prunes stale saved calendars and routes when calendars are removed from the system.
 - Prefix-based tagging and loop guards to prevent re-mirroring mirrors.
-- Settings: autosave/restore, Import/Export JSON.
+- Settings: autosave/restore, Import/Export JSON, saved routes for scheduled/headless runs.
 
 ## Why
 Use one calendar’s confirmed meetings to block time in other calendars (e.g., corporate iPad vs. personal devices).
@@ -48,6 +51,7 @@ See `CHANGELOG.md` for notable changes.
 ## Logs
 - BusyMirror now writes a persistent log file to `~/Library/Logs/BusyMirror/BusyMirror.log`.
 - When the file grows large, the previous file is rotated to `~/Library/Logs/BusyMirror/BusyMirror.previous.log`.
+- `launchd` stdout/stderr for scheduled runs are also written in the same folder.
 - In the UI, use `Reveal Log File` to open the current log directly in Finder.
 
 ## Scheduling
@@ -57,7 +61,7 @@ See `CHANGELOG.md` for notable changes.
   - `/Applications/BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit`
 - This is more stable than index-based `--routes`, because it uses the routes and per-route options you already configured in the UI.
 - Hourly schedules use `launchd` `StartInterval`; daily and weekday schedules use `StartCalendarInterval`.
-- You can remove the job from the same UI with `Remove Schedule`.
+- You can remove the job from the same UI with `Remove Schedule`, and inspect the generated plist with `Reveal LaunchAgent`.
 - Note: scheduled headless runs depend on Calendar permission being granted to the installed app. Because these local builds are unsigned, macOS may require re-granting permission after replacing the app bundle with a new build.
 
 ## Roadmap
