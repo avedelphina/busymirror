@@ -109,8 +109,8 @@ func uniqueBlocks(_ blocks: [Block], trackByID: Bool) -> [Block] {
     var out: [Block] = []
     for b in blocks {
         let key: String
-        if trackByID, let sid = b.srcEventID {
-            let occ = b.occurrence?.timeIntervalSince1970 ?? b.start.timeIntervalSince1970
+        if trackByID, let sid = b.srcStableID {
+            let occ = b.occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
             key = "id|\(sid)|\(occ)"
         } else {
             key = "t|\(b.start.timeIntervalSince1970)|\(b.end.timeIntervalSince1970)"
@@ -120,8 +120,62 @@ func uniqueBlocks(_ blocks: [Block], trackByID: Bool) -> [Block] {
     return out
 }
 
-// Parse mirror URL: mirror://<tgtID>|<srcCalID>|<srcEventID>|<occTS>|<startTS>|<endTS>
-private func parseMirrorURL(_ url: URL?) -> (targetCalID: String?, sourceCalID: String?, srcEventID: String?, occ: Date?, start: Date?, end: Date?) {
+private let mirrorURLAllowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+
+private func mirrorURLComponentEncode(_ raw: String) -> String {
+    raw.addingPercentEncoding(withAllowedCharacters: mirrorURLAllowedCharacters) ?? raw
+}
+
+private func mirrorURLComponentDecode(_ raw: Substring) -> String {
+    let value = String(raw)
+    return value.removingPercentEncoding ?? value
+}
+
+private func stableSourceIdentifier(for event: EKEvent) -> String? {
+    if let external = event.calendarItemExternalIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !external.isEmpty {
+        return "ext:\(external)"
+    }
+    let local = event.calendarItemIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !local.isEmpty {
+        return "loc:\(local)"
+    }
+    if let legacy = event.eventIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !legacy.isEmpty {
+        return "evt:\(legacy)"
+    }
+    return nil
+}
+
+private func sourceOccurrenceKey(sourceCalID: String, sourceStableID: String, occurrence: Date?) -> String {
+    let occPart = occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
+    return "\(sourceCalID)|\(sourceStableID)|\(occPart)"
+}
+
+private func mirrorRecordKey(targetCalID: String, sourceKey: String) -> String {
+    "\(targetCalID)|\(sourceKey)"
+}
+
+private func mirrorTimeKey(start: Date, end: Date) -> String {
+    "\(start.timeIntervalSince1970)|\(end.timeIntervalSince1970)"
+}
+
+private func buildMirrorURL(targetCalID: String, sourceCalID: String, sourceStableID: String?, occurrence: Date?, start: Date, end: Date) -> URL? {
+    let sourceID = sourceStableID ?? ""
+    let occ = occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
+    let parts = [
+        mirrorURLComponentEncode(targetCalID),
+        mirrorURLComponentEncode(sourceCalID),
+        mirrorURLComponentEncode(sourceID),
+        occ,
+        String(start.timeIntervalSince1970),
+        String(end.timeIntervalSince1970)
+    ]
+    return URL(string: "mirror://\(parts.joined(separator: "|"))")
+}
+
+// Parse mirror URL: mirror://<tgtID>|<srcCalID>|<srcStableID>|<occTS>|<startTS>|<endTS>
+private func parseMirrorURL(_ url: URL?) -> (targetCalID: String?, sourceCalID: String?, sourceStableID: String?, occ: Date?, start: Date?, end: Date?) {
     guard let abs = url?.absoluteString, abs.hasPrefix("mirror://") else { return (nil, nil, nil, nil, nil, nil) }
     let body = abs.dropFirst("mirror://".count)
     let parts = body.split(separator: "|")
@@ -131,10 +185,14 @@ private func parseMirrorURL(_ url: URL?) -> (targetCalID: String?, sourceCalID: 
     var occDate: Date? = nil
     var sDate: Date? = nil
     var eDate: Date? = nil
-    if parts.count >= 1 { targetCalID = String(parts[0]) }
-    if parts.count >= 2 { sourceCalID = String(parts[1]) }
-    if parts.count >= 3 { srcID = String(parts[2]) }
+    if parts.count >= 1 { targetCalID = mirrorURLComponentDecode(parts[0]) }
+    if parts.count >= 2 { sourceCalID = mirrorURLComponentDecode(parts[1]) }
+    if parts.count >= 3 {
+        let decoded = mirrorURLComponentDecode(parts[2])
+        srcID = decoded.isEmpty ? nil : decoded
+    }
     if parts.count >= 4,
+       String(parts[3]) != "-",
        let ts = TimeInterval(String(parts[3])) {
         occDate = Date(timeIntervalSince1970: ts)
     }
@@ -159,10 +217,33 @@ private func isMirrorEvent(_ ev: EKEvent, prefix: String, placeholder: String) -
 struct Block: Hashable {
     let start: Date
     let end: Date
-    let srcEventID: String?   // for reschedule tracking
+    let srcStableID: String?  // stable source item ID for reschedule tracking
     let label: String?        // source title (for dry-run / non-private)
     let notes: String?        // source notes (for optional copy)
     let occurrence: Date?     // occurrenceDate for recurring instances
+}
+
+private struct MirrorRecord: Hashable, Codable {
+    var targetCalendarID: String
+    var sourceCalendarID: String
+    var sourceStableID: String
+    var occurrenceTimestamp: TimeInterval?
+    var targetEventIdentifier: String?
+    var lastKnownStartTimestamp: TimeInterval
+    var lastKnownEndTimestamp: TimeInterval
+    var updatedAt: Date = Date()
+
+    var sourceKey: String {
+        sourceOccurrenceKey(
+            sourceCalID: sourceCalendarID,
+            sourceStableID: sourceStableID,
+            occurrence: occurrenceTimestamp.map { Date(timeIntervalSince1970: $0) }
+        )
+    }
+
+    var timeKey: String {
+        "\(lastKnownStartTimestamp)|\(lastKnownEndTimestamp)"
+    }
 }
 
 struct Route: Identifiable, Hashable, Codable {
@@ -248,6 +329,7 @@ struct ContentView: View {
     @AppStorage("titlePrefix") private var titlePrefix: String = "🪞 "   // global title prefix for mirrored placeholders
     @AppStorage("placeholderTitle") private var placeholderTitle: String = "Busy"   // global customizable placeholder title
     @AppStorage("autoDeleteMissing") private var autoDeleteMissing: Bool = true       // delete mirrors whose source instance no longer exists
+    private let mirrorIndexDefaultsKey = "mirror-index.v1"
     
     // Mirrors can run either by manual selection (source + at least one target)
     // or using predefined routes. This derived flag controls the Mirror Now button.
@@ -255,6 +337,25 @@ struct ContentView: View {
         let hasManualTargets = !targetIDs.isEmpty
         let hasRouteTargets = routes.contains { !$0.targetIDs.isEmpty }
         return hasAccess && !isRunning && !calendars.isEmpty && (hasManualTargets || hasRouteTargets)
+    }
+
+    private func loadMirrorIndex() -> [String: MirrorRecord] {
+        guard let data = UserDefaults.standard.data(forKey: mirrorIndexDefaultsKey) else { return [:] }
+        do {
+            return try JSONDecoder().decode([String: MirrorRecord].self, from: data)
+        } catch {
+            log("✗ Failed to load mirror index: \(error.localizedDescription)")
+            return [:]
+        }
+    }
+
+    private func saveMirrorIndex(_ index: [String: MirrorRecord]) {
+        do {
+            let data = try JSONEncoder().encode(index)
+            UserDefaults.standard.set(data, forKey: mirrorIndexDefaultsKey)
+        } catch {
+            log("✗ Failed to save mirror index: \(error.localizedDescription)")
+        }
     }
     
     private static let intFormatter: NumberFormatter = {
@@ -1660,8 +1761,8 @@ struct ContentView: View {
             guard let s = ev.startDate, let e = ev.endDate, e > s else { continue }
             // Defensive: never treat events from another calendar as source
             guard ev.calendar.calendarIdentifier == srcCal.calendarIdentifier else { continue }
-            let srcID = ev.eventIdentifier // stable across launches unless event is deleted
-            srcBlocks.append(Block(start: s, end: e, srcEventID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate))
+            let srcID = stableSourceIdentifier(for: ev)
+            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate))
         }
         if skippedMirrors > 0 {
             log("- SKIP mirrored-on-source: \(skippedMirrors) instance(s)")
@@ -1684,6 +1785,13 @@ struct ContentView: View {
         // Merge for Flights or similar
         let baseBlocks = (mergeGapMin > 0) ? mergeBlocks(srcBlocks, gapMinutes: mergeGapMin) : srcBlocks
         let trackByID = (mergeGapMin == 0)
+        var mirrorIndex = loadMirrorIndex()
+        var mirrorIndexChanged = false
+
+        func sourceKey(for blk: Block) -> String? {
+            guard trackByID, let sid = blk.srcStableID else { return nil }
+            return sourceOccurrenceKey(sourceCalID: srcCal.calendarIdentifier, sourceStableID: sid, occurrence: blk.occurrence)
+        }
 
         for tgt in targets {
             let tgtName = calLabel(tgt)
@@ -1704,23 +1812,43 @@ struct ContentView: View {
 
             var placeholderSet = Set<String>()
             var occupied: [Block] = []
-            var placeholdersByOccurrenceID: [String: EKEvent] = [:]
+            var placeholdersBySourceKey: [String: EKEvent] = [:]
             var placeholdersByTime: [String: EKEvent] = [:]
+            var targetEventsByIdentifier: [String: EKEvent] = [:]
             for tv in tgtEvents {
-                // Defensive: should already be filtered, but double-check target identity
                 guard tv.calendar.calendarIdentifier == tgt.calendarIdentifier else { continue }
+                if let eid = tv.eventIdentifier {
+                    targetEventsByIdentifier[eid] = tv
+                }
                 if let ts = tv.startDate, let te = tv.endDate {
-                    let timeKey = "\(ts.timeIntervalSince1970)|\(te.timeIntervalSince1970)"
+                    let timeKey = mirrorTimeKey(start: ts, end: te)
                     if isMirrorEvent(tv, prefix: titlePrefix, placeholder: placeholderTitle) {
                         placeholderSet.insert(timeKey)
                         placeholdersByTime[timeKey] = tv
                         let parsed = parseMirrorURL(tv.url)
-                        if let sid = parsed.srcEventID, let occ = parsed.occ {
-                            let key = "\(sid)|\(occ.timeIntervalSince1970)"
-                            placeholdersByOccurrenceID[key] = tv
+                        if let sourceCalID = parsed.sourceCalID,
+                           let sourceStableID = parsed.sourceStableID,
+                           !sourceCalID.isEmpty,
+                           !sourceStableID.isEmpty {
+                            let key = sourceOccurrenceKey(sourceCalID: sourceCalID, sourceStableID: sourceStableID, occurrence: parsed.occ)
+                            placeholdersBySourceKey[key] = tv
+                            let recordKey = mirrorRecordKey(targetCalID: tgt.calendarIdentifier, sourceKey: key)
+                            let record = MirrorRecord(
+                                targetCalendarID: tgt.calendarIdentifier,
+                                sourceCalendarID: sourceCalID,
+                                sourceStableID: sourceStableID,
+                                occurrenceTimestamp: parsed.occ?.timeIntervalSince1970,
+                                targetEventIdentifier: tv.eventIdentifier,
+                                lastKnownStartTimestamp: ts.timeIntervalSince1970,
+                                lastKnownEndTimestamp: te.timeIntervalSince1970
+                            )
+                            if mirrorIndex[recordKey] != record {
+                                mirrorIndex[recordKey] = record
+                                mirrorIndexChanged = true
+                            }
                         }
                     }
-                    occupied.append(Block(start: ts, end: te, srcEventID: nil, label: nil, notes: nil, occurrence: nil))
+                    occupied.append(Block(start: ts, end: te, srcStableID: nil, label: nil, notes: nil, occurrence: nil))
                 }
             }
             occupied = coalesce(occupied)
@@ -1730,146 +1858,185 @@ struct ContentView: View {
             var updated = 0
             var warnedPrivateUnsupported = false
 
-            // Cross-route loop guard: unique key generator for (source, occurrence/time, target)
             func guardKey(for blk: Block, targetID: String) -> String {
-                if trackByID, let sid = blk.srcEventID {
-                    let occ = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                    return "\(srcCal.calendarIdentifier)|\(sid)|\(occ)|\(targetID)"
-                } else {
-                    return "\(srcCal.calendarIdentifier)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)|\(targetID)"
+                if let key = sourceKey(for: blk) {
+                    return "\(key)|\(targetID)"
+                }
+                return "\(srcCal.calendarIdentifier)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)|\(targetID)"
+            }
+
+            func desiredNotes(for blk: Block) -> String? {
+                (!hideDetails && copyDescription) ? blk.notes : nil
+            }
+
+            func upsertMirrorRecord(for blk: Block, event: EKEvent) {
+                guard let sid = blk.srcStableID,
+                      let key = sourceKey(for: blk),
+                      let startDate = event.startDate,
+                      let endDate = event.endDate else { return }
+                let recordKey = mirrorRecordKey(targetCalID: tgt.calendarIdentifier, sourceKey: key)
+                let record = MirrorRecord(
+                    targetCalendarID: tgt.calendarIdentifier,
+                    sourceCalendarID: srcCal.calendarIdentifier,
+                    sourceStableID: sid,
+                    occurrenceTimestamp: blk.occurrence?.timeIntervalSince1970,
+                    targetEventIdentifier: event.eventIdentifier,
+                    lastKnownStartTimestamp: startDate.timeIntervalSince1970,
+                    lastKnownEndTimestamp: endDate.timeIntervalSince1970
+                )
+                if mirrorIndex[recordKey] != record {
+                    mirrorIndex[recordKey] = record
+                    mirrorIndexChanged = true
                 }
             }
 
+            func removeMirrorRecord(for key: String) {
+                let recordKey = mirrorRecordKey(targetCalID: tgt.calendarIdentifier, sourceKey: key)
+                if mirrorIndex.removeValue(forKey: recordKey) != nil {
+                    mirrorIndexChanged = true
+                }
+            }
+
+            func resolveMappedEvent(for record: MirrorRecord) -> EKEvent? {
+                if let eid = record.targetEventIdentifier,
+                   let event = targetEventsByIdentifier[eid],
+                   event.calendar.calendarIdentifier == tgt.calendarIdentifier {
+                    return event
+                }
+                return placeholdersByTime[record.timeKey]
+            }
+
+            func rememberMirrorEvent(_ event: EKEvent, for blk: Block) {
+                if let startDate = event.startDate, let endDate = event.endDate {
+                    let timeKey = mirrorTimeKey(start: startDate, end: endDate)
+                    placeholderSet.insert(timeKey)
+                    placeholdersByTime[timeKey] = event
+                }
+                if let key = sourceKey(for: blk) {
+                    placeholdersBySourceKey[key] = event
+                }
+                if let eid = event.eventIdentifier {
+                    targetEventsByIdentifier[eid] = event
+                }
+                upsertMirrorRecord(for: blk, event: event)
+            }
+
+            func needsUpdate(existing: EKEvent, blk: Block, displayTitle: String, desiredNotes: String?, desiredURL: URL?) -> Bool {
+                let curS = existing.startDate ?? blk.start
+                let curE = existing.endDate ?? blk.end
+                if abs(curS.timeIntervalSince(blk.start)) > SAME_TIME_TOL_MIN * 60 { return true }
+                if abs(curE.timeIntervalSince(blk.end)) > SAME_TIME_TOL_MIN * 60 { return true }
+                if (existing.title ?? "") != displayTitle { return true }
+                if (existing.notes ?? "") != (desiredNotes ?? "") { return true }
+                if existing.isAllDay { return true }
+                if (existing.url?.absoluteString ?? "") != (desiredURL?.absoluteString ?? "") { return true }
+                return false
+            }
+
             func createOrUpdateIfNeeded(_ blk: Block) async {
-                // Cross-route loop guard: skip if this (source occurrence -> target) was handled earlier this click
                 let gKey = guardKey(for: blk, targetID: tgt.calendarIdentifier)
                 if sessionGuard.contains(gKey) {
                     skipped += 1
                     log("- SKIP loop-guard [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
                     return
                 }
-                // Privacy-aware title/notes (strip our prefix so it never doubles up)
+
                 let baseSourceTitle = stripPrefix(blk.label, prefix: titlePrefix)
                 let effectiveTitle = hideDetails ? placeholderTitle : (baseSourceTitle.isEmpty ? placeholderTitle : baseSourceTitle)
                 let titleSuffix = hideDetails ? "" : (baseSourceTitle.isEmpty ? "" : " — \(baseSourceTitle)")
                 let displayTitle = (titlePrefix.isEmpty ? "" : titlePrefix) + effectiveTitle
+                let notes = desiredNotes(for: blk)
+                let desiredURL = buildMirrorURL(
+                    targetCalID: tgt.calendarIdentifier,
+                    sourceCalID: srcCal.calendarIdentifier,
+                    sourceStableID: blk.srcStableID,
+                    occurrence: blk.occurrence,
+                    start: blk.start,
+                    end: blk.end
+                )
+                let exactTimeKey = mirrorTimeKey(start: blk.start, end: blk.end)
+                let blkSourceKey = sourceKey(for: blk)
 
-                // Fallback 0: if an existing mirrored event has the exact same time, update it
-                let exactTimeKey = "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
-                if let existingByTime = placeholdersByTime[exactTimeKey] {
+                func updateExisting(_ existing: EKEvent, byTime: Bool) async {
+                    let curS = existing.startDate ?? blk.start
+                    let curE = existing.endDate ?? blk.end
+                    rememberMirrorEvent(existing, for: blk)
+                    if !needsUpdate(existing: existing, blk: blk, displayTitle: displayTitle, desiredNotes: notes, desiredURL: desiredURL) {
+                        sessionGuard.insert(gKey)
+                        skipped += 1
+                        return
+                    }
+                    let byTimeSuffix = byTime ? " (by time)" : ""
                     if !writeEnabled {
                         sessionGuard.insert(gKey)
-                        log("~ WOULD UPDATE [\(srcName) -> \(tgtName)] (by time) \(blk.start) -> \(blk.end) [title: \(displayTitle)]")
+                        log("~ WOULD UPDATE [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(curS) -> \(curE)  TO  \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
                         updated += 1
                         return
                     }
-                    existingByTime.title = displayTitle
-                    existingByTime.startDate = blk.start
-                    existingByTime.endDate = blk.end
-                    existingByTime.isAllDay = false
-                    if !hideDetails && copyDescription {
-                        existingByTime.notes = blk.notes
-                    } else {
-                        existingByTime.notes = nil
-                    }
-                    let sid0 = blk.srcEventID ?? ""
-                    let occ0 = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                    existingByTime.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid0)|\(occ0)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
-                    let okTime = setEventPrivateIfSupported(existingByTime, markPrivate)
-                    if markPrivate && !okTime && !warnedPrivateUnsupported {
+                    existing.title = displayTitle
+                    existing.startDate = blk.start
+                    existing.endDate = blk.end
+                    existing.isAllDay = false
+                    existing.notes = notes
+                    existing.url = desiredURL
+                    let ok = setEventPrivateIfSupported(existing, markPrivate)
+                    if markPrivate && !ok && !warnedPrivateUnsupported {
                         log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
                         warnedPrivateUnsupported = true
                     }
                     do {
                         try await MainActor.run {
-                            try store.save(existingByTime, span: .thisEvent, commit: true)
+                            try store.save(existing, span: .thisEvent, commit: true)
                         }
-                        log("✓ UPDATED [\(srcName) -> \(tgtName)] (by time) \(blk.start) -> \(blk.end)")
-                        placeholderSet.insert(exactTimeKey)
-                        placeholdersByTime[exactTimeKey] = existingByTime
-                        occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)])
+                        log("✓ UPDATED [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(blk.start) -> \(blk.end)")
+                        rememberMirrorEvent(existing, for: blk)
+                        occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)])
                         sessionGuard.insert(gKey)
                         updated += 1
                     } catch {
                         log("Update failed: \(error.localizedDescription)")
                     }
+                }
+
+                if let blkSourceKey,
+                   let record = mirrorIndex[mirrorRecordKey(targetCalID: tgt.calendarIdentifier, sourceKey: blkSourceKey)],
+                   let existing = resolveMappedEvent(for: record) {
+                    await updateExisting(existing, byTime: false)
                     return
                 }
 
-                // If we can track by source event ID and we have one, prefer updating the existing placeholder
-                if trackByID, let sid = blk.srcEventID {
-                    let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                    let lookupKey = "\(sid)|\(occTS)"
-                    if let existing = placeholdersByOccurrenceID[lookupKey] {
-                        let curS = existing.startDate ?? blk.start
-                        let curE = existing.endDate ?? blk.end
-                        let needsUpdate = abs(curS.timeIntervalSince(blk.start)) > SAME_TIME_TOL_MIN*60 || abs(curE.timeIntervalSince(blk.end)) > SAME_TIME_TOL_MIN*60
-                        if !needsUpdate {
-                            skipped += 1
-                            return
-                        }
-                        if !writeEnabled {
-                            sessionGuard.insert(gKey)
-                            log("~ WOULD UPDATE [\(srcName) -> \(tgtName)] \(curS) -> \(curE)  TO  \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
-                            updated += 1
-                            return
-                        }
-                        existing.startDate = blk.start
-                        existing.endDate = blk.end
-                        existing.title = displayTitle
-                        existing.isAllDay = false
-                        if !hideDetails && copyDescription {
-                            existing.notes = blk.notes
-                        } else {
-                            existing.notes = nil
-                        }
-                        existing.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
-                        let okOcc = setEventPrivateIfSupported(existing, markPrivate)
-                        if markPrivate && !okOcc && !warnedPrivateUnsupported {
-                            log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
-                            warnedPrivateUnsupported = true
-                        }
-                        do {
-                            try await MainActor.run {
-                                try store.save(existing, span: .thisEvent, commit: true)
-                            }
-                            log("✓ UPDATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
-                            placeholderSet.insert("\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
-                            let timeKey = "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
-                            placeholdersByTime[timeKey] = existing
-                            occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)])
-                            placeholdersByOccurrenceID[lookupKey] = existing
-                            sessionGuard.insert(gKey)
-                            updated += 1
-                        } catch {
-                            log("Update failed: \(error.localizedDescription)")
-                        }
-                        return
-                    }
+                if let blkSourceKey, let existing = placeholdersBySourceKey[blkSourceKey] {
+                    await updateExisting(existing, byTime: false)
+                    return
                 }
 
-                // No existing placeholder for this block; dedupe by exact times
-                let k = "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
-                if placeholderSet.contains(k) { skipped += 1; return }
+                if let existingByTime = placeholdersByTime[exactTimeKey] {
+                    await updateExisting(existingByTime, byTime: true)
+                    return
+                }
+
+                if placeholderSet.contains(exactTimeKey) {
+                    skipped += 1
+                    return
+                }
                 if !writeEnabled {
                     sessionGuard.insert(gKey)
                     log("+ WOULD CREATE [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
                     return
                 }
-                // Invariant: never write to the source calendar by mistake
-                guard tgt.calendarIdentifier != srcCal.calendarIdentifier else { skipped += 1; log("- SKIP invariant: target is source [\(srcName)]"); return }
+                guard tgt.calendarIdentifier != srcCal.calendarIdentifier else {
+                    skipped += 1
+                    log("- SKIP invariant: target is source [\(srcName)]")
+                    return
+                }
                 let newEv = EKEvent(eventStore: store)
                 newEv.calendar = tgt
                 newEv.title = displayTitle
                 newEv.startDate = blk.start
                 newEv.endDate = blk.end
                 newEv.isAllDay = false
-                if !hideDetails && copyDescription {
-                    newEv.notes = blk.notes
-                }
-                let sid = blk.srcEventID ?? ""
-                let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                newEv.url = URL(string: "mirror://\(tgt.calendarIdentifier)|\(srcCal.calendarIdentifier)|\(sid)|\(occTS)|\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)")
+                newEv.notes = notes
+                newEv.url = desiredURL
                 newEv.availability = .busy
                 let okNew = setEventPrivateIfSupported(newEv, markPrivate)
                 if markPrivate && !okNew && !warnedPrivateUnsupported {
@@ -1882,14 +2049,8 @@ struct ContentView: View {
                     }
                     created += 1
                     log("✓ CREATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
-                    placeholderSet.insert(k)
-                    occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)])
-                    if !sid.isEmpty {
-                        let key = "\(sid)|\(occTS)"
-                        placeholdersByOccurrenceID[key] = newEv
-                    }
-                    let timeKey = k
-                    placeholdersByTime[timeKey] = newEv
+                    rememberMirrorEvent(newEv, for: blk)
+                    occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)])
                     sessionGuard.insert(gKey)
                 } catch {
                     log("Save failed: \(error.localizedDescription)")
@@ -1918,25 +2079,11 @@ struct ContentView: View {
                 }
             }
             log("[Summary → \(tgtName)] created=\(created), updated=\(updated), skipped=\(skipped)")
-            // Auto-delete placeholders whose source instance no longer exists.
-            // Works even when no source events remain in the window, and
-            // also cleans up legacy mirrors that lack a mirror URL (by time).
             if autoDeleteMissing {
-                let trackByID = (mergeGapMin == 0)
+                let activeSourceKeys = Set(baseBlocks.compactMap { sourceKey(for: $0) })
+                let validTimeKeys = Set(baseBlocks.map { mirrorTimeKey(start: $0.start, end: $0.end) })
                 let isMultiRouteRun = !routes.isEmpty
-                // Build valid occurrence keys from current source blocks (when trackByID)
-                let validOccKeys: Set<String> = Set(baseBlocks.compactMap { blk in
-                    guard trackByID, let sid = blk.srcEventID else { return nil }
-                    let occTS = blk.occurrence?.timeIntervalSince1970 ?? blk.start.timeIntervalSince1970
-                    return "\(sid)|\(occTS)"
-                })
-                // Also build valid time keys for legacy/fallback cleanup
-                let validTimeKeys: Set<String> = Set(baseBlocks.map { blk in
-                    "\(blk.start.timeIntervalSince1970)|\(blk.end.timeIntervalSince1970)"
-                })
 
-                // Consider all known placeholders on target (URL or title-identified)
-                // Deduplicate by eventIdentifier to avoid double-processing updated items
                 var byID: [String: EKEvent] = [:]
                 for tv in placeholdersByTime.values {
                     guard tv.calendar.calendarIdentifier == tgt.calendarIdentifier else { continue }
@@ -1946,35 +2093,77 @@ struct ContentView: View {
                 var removed = 0
                 var skippedOtherSource = 0
                 var skippedLegacyNoURL = 0
+                var handledEventIDs = Set<String>()
+
+                let staleMirrorRecords = mirrorIndex.filter {
+                    $0.value.targetCalendarID == tgt.calendarIdentifier &&
+                    $0.value.sourceCalendarID == srcCal.calendarIdentifier &&
+                    !activeSourceKeys.contains($0.value.sourceKey)
+                }
+
+                for (recordKey, record) in staleMirrorRecords {
+                    let candidate = resolveMappedEvent(for: record)
+                    if let candidate {
+                        if !writeEnabled {
+                            log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(candidate.startDate ?? windowStart) -> \(candidate.endDate ?? windowEnd)")
+                        } else {
+                            do {
+                                try await MainActor.run {
+                                    try store.remove(candidate, span: .thisEvent, commit: true)
+                                }
+                                removed += 1
+                            } catch {
+                                log("Delete failed: \(error.localizedDescription)")
+                            }
+                        }
+                        if let eid = candidate.eventIdentifier {
+                            handledEventIDs.insert(eid)
+                        }
+                    }
+                    if writeEnabled || candidate == nil {
+                        if mirrorIndex.removeValue(forKey: recordKey) != nil {
+                            mirrorIndexChanged = true
+                        }
+                    }
+                }
+
                 for ev in byID.values {
+                    if let eid = ev.eventIdentifier, handledEventIDs.contains(eid) {
+                        continue
+                    }
                     let parsed = parseMirrorURL(ev.url)
                     var shouldDelete = false
+                    var parsedSourceKey: String? = nil
                     if let sourceCalID = parsed.sourceCalID, !sourceCalID.isEmpty {
-                        // Only clean up placeholders that belong to this route's source calendar.
                         if sourceCalID != srcCal.calendarIdentifier {
                             skippedOtherSource += 1
                             continue
                         }
-                        if let sid = parsed.srcEventID, let occ = parsed.occ {
-                            let k = "\(sid)|\(occ.timeIntervalSince1970)"
-                            // If key not present among current source instances, delete
-                            if !validOccKeys.contains(k) { shouldDelete = true }
-                        } else if trackByID {
-                            // Legacy-ish URL payload for this source: compare exact time window membership.
-                            if let s = ev.startDate, let e = ev.endDate {
-                                let tk = "\(s.timeIntervalSince1970)|\(e.timeIntervalSince1970)"
-                                if !validTimeKeys.contains(tk) { shouldDelete = true }
-                            }
+                        if let sourceStableID = parsed.sourceStableID, !sourceStableID.isEmpty {
+                            let key = sourceOccurrenceKey(sourceCalID: sourceCalID, sourceStableID: sourceStableID, occurrence: parsed.occ)
+                            parsedSourceKey = key
+                            if !activeSourceKeys.contains(key) { shouldDelete = true }
+                        } else if trackByID,
+                                  let s = ev.startDate,
+                                  let e = ev.endDate,
+                                  !validTimeKeys.contains(mirrorTimeKey(start: s, end: e)) {
+                            shouldDelete = true
                         }
                     } else if trackByID && !isMultiRouteRun {
-                        // Legacy fallback without URL source only in single-source runs.
-                        if let s = ev.startDate, let e = ev.endDate {
-                            let tk = "\(s.timeIntervalSince1970)|\(e.timeIntervalSince1970)"
-                            if !validTimeKeys.contains(tk) { shouldDelete = true }
+                        if let s = ev.startDate,
+                           let e = ev.endDate,
+                           !validTimeKeys.contains(mirrorTimeKey(start: s, end: e)) {
+                            shouldDelete = true
                         }
                     } else if trackByID && isMultiRouteRun {
-                        // In multi-route runs, avoid deleting URL-less placeholders that may belong to another source.
-                        skippedLegacyNoURL += 1
+                        let hasMapping = mirrorIndex.values.contains {
+                            $0.targetCalendarID == tgt.calendarIdentifier &&
+                            $0.sourceCalendarID == srcCal.calendarIdentifier &&
+                            $0.targetEventIdentifier == ev.eventIdentifier
+                        }
+                        if !hasMapping {
+                            skippedLegacyNoURL += 1
+                        }
                         continue
                     }
                     if shouldDelete {
@@ -1986,8 +2175,12 @@ struct ContentView: View {
                                     try store.remove(ev, span: .thisEvent, commit: true)
                                 }
                                 removed += 1
+                            } catch {
+                                log("Delete failed: \(error.localizedDescription)")
                             }
-                            catch { log("Delete failed: \(error.localizedDescription)") }
+                        }
+                        if let key = parsedSourceKey {
+                            removeMirrorRecord(for: key)
                         }
                     }
                 }
@@ -1996,9 +2189,12 @@ struct ContentView: View {
                     log("- INFO cleanup skipped \(skippedOtherSource) placeholders from other source routes on \(tgtName)")
                 }
                 if skippedLegacyNoURL > 0 {
-                    log("- INFO cleanup skipped \(skippedLegacyNoURL) legacy placeholders without source URL on \(tgtName)")
+                    log("- INFO cleanup skipped \(skippedLegacyNoURL) unmanaged legacy placeholders without source metadata on \(tgtName)")
                 }
             }
+        }
+        if mirrorIndexChanged {
+            saveMirrorIndex(mirrorIndex)
         }
     }
     
@@ -2285,14 +2481,14 @@ private struct SettingsPayload: Codable {
         guard !blocks.isEmpty else { return [] }
         let sorted = blocks.sorted { $0.start < $1.start }
         var out: [Block] = []
-        var cur = Block(start: sorted[0].start, end: sorted[0].end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)
+        var cur = Block(start: sorted[0].start, end: sorted[0].end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
         for b in sorted.dropFirst() {
             let gap = b.start.timeIntervalSince(cur.end) / 60.0
             if gap <= Double(gapMinutes) {
-                if b.end > cur.end { cur = Block(start: cur.start, end: b.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil) }
+                if b.end > cur.end { cur = Block(start: cur.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil) }
             } else {
                 out.append(cur)
-                cur = Block(start: b.start, end: b.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)
+                cur = Block(start: b.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
             }
         }
         out.append(cur)
@@ -2307,22 +2503,22 @@ private struct SettingsPayload: Codable {
         return false
     }
     func gapsWithin(_ mergedSegs: [Block], in block: Block) -> [Block] {
-        if mergedSegs.isEmpty { return [Block(start: block.start, end: block.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)] }
+        if mergedSegs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
         var segs: [Block] = []
         for s in mergedSegs where s.end > block.start && s.start < block.end {
             let ss = max(s.start, block.start)
             let ee = min(s.end, block.end)
-            if ee > ss { segs.append(Block(start: ss, end: ee, srcEventID: nil, label: nil, notes: nil, occurrence: nil)) }
+            if ee > ss { segs.append(Block(start: ss, end: ee, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
         }
-        if segs.isEmpty { return [Block(start: block.start, end: block.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)] }
+        if segs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
         let merged = coalesce(segs)
         var gaps: [Block] = []
         var prevEnd = block.start
         for s in merged {
-            if s.start > prevEnd { gaps.append(Block(start: prevEnd, end: s.start, srcEventID: nil, label: nil, notes: nil, occurrence: nil)) }
+            if s.start > prevEnd { gaps.append(Block(start: prevEnd, end: s.start, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
             if s.end > prevEnd { prevEnd = s.end }
         }
-        if prevEnd < block.end { gaps.append(Block(start: prevEnd, end: block.end, srcEventID: nil, label: nil, notes: nil, occurrence: nil)) }
+        if prevEnd < block.end { gaps.append(Block(start: prevEnd, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
         return gaps
     }
 

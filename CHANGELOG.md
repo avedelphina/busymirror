@@ -2,6 +2,12 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.7] - 2026-03-24
+- Fix: mirror reconciliation now survives target providers that strip BusyMirror's custom event URL metadata.
+- Fix: moved and deleted source events are tracked via stable EventKit identifiers and a persisted local mirror index, so target placeholders update reliably.
+- Fix: mirror updates now detect title and notes changes, not just start/end time changes.
+- Build: bump version to 1.3.7 (build 15).
+
 ## [1.3.6] - 2026-03-13
 - Scheduling: add in-app `Scheduled runs` controls to install or remove a user `launchd` LaunchAgent from BusyMirror itself.
 - Scheduling: support `Hourly`, `Daily`, and `Weekdays` schedules; hourly mode runs saved routes via `StartInterval`.
