@@ -2,6 +2,12 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.8] - 2026-04-08
+- Fix: release ZIPs now package `BusyMirror.app` at the archive root instead of embedding the full build path.
+- Fix: release builds now apply an ad-hoc bundle signature before packaging so downloaded artifacts pass `codesign --verify --deep --strict`.
+- Build: suppress resource fork sidecars in release ZIPs via `ditto --norsrc --keepParent`.
+- Build: bump version to 1.3.8 (build 16).
+
 ## [1.3.7] - 2026-03-24
 - Fix: mirror reconciliation now survives target providers that strip BusyMirror's custom event URL metadata.
 - Fix: moved and deleted source events are tracked via stable EventKit identifiers and a persisted local mirror index, so target placeholders update reliably.
