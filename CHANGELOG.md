@@ -2,6 +2,12 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.3.9] - 2026-04-09
+- New: add a macOS menu bar extra with `Sync Now`, `Open BusyMirror`, and `Quit BusyMirror`.
+- UX: menu bar sync requests reuse the existing mirror flow and can open the main window automatically when needed.
+- UX: BusyMirror now runs as a menu bar-only app and no longer appears in the Dock.
+- Build: bump version to 1.3.9 (build 17).
+
 ## [1.3.8] - 2026-04-08
 - Fix: release ZIPs now package `BusyMirror.app` at the archive root instead of embedding the full build path.
 - Fix: release builds now apply an ad-hoc bundle signature before packaging so downloaded artifacts pass `codesign --verify --deep --strict`.

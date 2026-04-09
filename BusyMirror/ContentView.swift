@@ -284,6 +284,7 @@ struct Route: Identifiable, Hashable, Codable {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var appController: BusyMirrorAppController
     @State private var store = EKEventStore()
     @State private var hasAccess = false
     @State private var calendars: [EKCalendar] = []
@@ -986,7 +987,14 @@ struct ContentView: View {
     }
 
     private func startMirrorNow() {
+        guard !appController.isSyncing else { return }
+        appController.setSyncing(true)
         Task {
+            defer {
+                Task { @MainActor in
+                    appController.setSyncing(false)
+                }
+            }
             // New click -> reset the guard so we don't re-process
             sessionGuard.removeAll()
             if routes.isEmpty {
@@ -995,6 +1003,20 @@ struct ContentView: View {
                 await runConfiguredRoutes(routes)
             }
         }
+    }
+
+    private func handlePendingMenuBarSyncIfNeeded() {
+        guard appController.hasPendingSyncRequest else { return }
+        guard !isRunning else { return }
+        guard hasAccess else { return }
+        guard !calendars.isEmpty else { return }
+        guard canRunMirrorNow else {
+            appController.clearPendingSyncRequest()
+            log("Menu bar sync requested, but no valid manual targets or saved routes are available.")
+            return
+        }
+        appController.clearPendingSyncRequest()
+        startMirrorNow()
     }
 
     @ViewBuilder
@@ -1449,6 +1471,7 @@ struct ContentView: View {
             Text("This will remove events identified as mirrored (by URL prefix or title prefix ‘\(titlePrefix)’) within the current window (Days back/forward) from the selected target calendars.")
         }
         .onAppear {
+            appController.setMainWindowVisible(true)
             AppLogStore.append("=== BusyMirror launch ===")
             log("Log file: \(AppLogStore.logFileURL.path)")
             requestAccess()
@@ -1456,8 +1479,15 @@ struct ContentView: View {
             mergeGapMin = max(0, mergeGapHours * 60)
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
+            handlePendingMenuBarSyncIfNeeded()
+        }
+        .onDisappear {
+            appController.setMainWindowVisible(false)
         }
         // Persist key settings whenever they change, to ensure restore between runs
+        .onChange(of: appController.syncRequestToken) { _ in
+            handlePendingMenuBarSyncIfNeeded()
+        }
         .onChange(of: daysBack) { _ in saveSettingsToDefaults() }
         .onChange(of: daysForward) { _ in saveSettingsToDefaults() }
         .onChange(of: mergeGapHours) { _ in saveSettingsToDefaults() }
@@ -1485,9 +1515,11 @@ struct ContentView: View {
             // If IDs contain the source’s ID, drop it
             enforceNoSourceInTargets()
             saveSettingsToDefaults()
+            handlePendingMenuBarSyncIfNeeded()
         }
         .onChange(of: routes) { _ in
             saveSettingsToDefaults()
+            handlePendingMenuBarSyncIfNeeded()
         }
     }
     
@@ -1618,6 +1650,8 @@ struct ContentView: View {
                         // Reinitialize the store after permission changes to ensure sources load
                         store = EKEventStore()
                         reloadCalendars()
+                    } else {
+                        appController.clearPendingSyncRequest()
                     }
                     log(granted ? "Access granted." : "Access denied.")
                 }
@@ -1630,6 +1664,8 @@ struct ContentView: View {
                         // Reinitialize the store after permission changes to ensure sources load
                         store = EKEventStore()
                         reloadCalendars()
+                    } else {
+                        appController.clearPendingSyncRequest()
                     }
                     log(granted ? "Access granted." : "Access denied.")
                 }
@@ -1655,6 +1691,7 @@ struct ContentView: View {
             saveSettingsToDefaults()
         }
         log("Loaded \(calendars.count) calendars.")
+        handlePendingMenuBarSyncIfNeeded()
     }
     
     // MARK: - Mirror engine (EventKit)
