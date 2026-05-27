@@ -4,6 +4,8 @@
 <dict>
 	<key>LSUIElement</key>
 	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.5</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>BusyMirror needs access to your calendars to create busy placeholders.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

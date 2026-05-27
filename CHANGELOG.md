@@ -2,6 +2,34 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.4.0] - 2026-05-27
+
+### Fixed
+- **Sandbox LaunchAgent**: added `temporary-exception` entitlement so scheduled runs work in the sandboxed app.
+- **Mirror URL generation**: `buildMirrorURL` was silently broken — `URL(string:)` rejects raw `|` characters on current macOS, so mirror metadata URLs were always `nil`. Rebuilt with `URLComponents` using `;` separator and backward-compatible parser.
+- **Crash on Cleanup**: `runCleanup()` no longer crashes if the selected source calendar was removed.
+- **State corruption in multi-route runs**: `runConfiguredRoutes` no longer mutates global `@State` settings and restores them at the end of each loop; instead it passes a `MirrorConfig` struct into the engine.
+- **KVC safety**: removed misleading `do-catch` around `setValue:forKey:` in `setEventPrivateIfSupported()` (Objective-C exceptions are uncatchable in Swift).
+- **Log memory leak**: in-memory log now caps at 2,000 lines.
+- **CLI race**: `tryRunCLIIfPresent()` now preloads calendars when access is already granted, eliminating the 10-second timeout race.
+- **launchCtl output**: stdout and stderr now use separate pipes instead of interleaving into one.
+
+### Added
+- **Cancel button**: long-running mirrors now show a Cancel button; loops check `Task.isCancelled` for responsive cancellation.
+- **Progress indicator**: multi-route runs display `"Route X of Y"` in the status area.
+- **Unit tests**: 45 tests across `BlockMathTests`, `MirrorUtilsTests`, and `EventFiltersTests`.
+- **Extracted modules**: `BlockMath.swift`, `MirrorUtils.swift`, `EventFilters.swift`, and `MirrorConfig.swift` separate pure logic from the UI monolith.
+- **Target event cache**: target calendars shared across routes are fetched only once per run session.
+
+### Changed
+- `mergeGapMin` is now a computed property instead of redundant `@State`.
+- Log editor is now read-only (still selectable/copyable).
+- `SettingsPayload.excludedOrganizerFilters` is now non-optional for consistency.
+
+### Build
+- Bump minimum macOS version to `15.5` in `Info.plist`.
+- Bump version to **1.4.0** (build **18**).
+
 ## [1.3.9] - 2026-04-09
 - New: add a macOS menu bar extra with `Sync Now`, `Open BusyMirror`, and `Quit BusyMirror`.
 - UX: menu bar sync requests reuse the existing mirror flow and can open the main window automatically when needed.

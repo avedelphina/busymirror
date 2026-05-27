@@ -96,133 +96,6 @@ private func calChip(_ cal: EKCalendar) -> some View {
     }
 }
 
-// Remove our prefix when building titles so it never doubles up
-func stripPrefix(_ title: String?, prefix: String) -> String {
-    guard let t = title else { return "" }
-    if prefix.isEmpty { return t }
-    return t.hasPrefix(prefix) ? String(t.dropFirst(prefix.count)) : t
-}
-
-// De-dup blocks by occurrence (preferred) or by time range
-func uniqueBlocks(_ blocks: [Block], trackByID: Bool) -> [Block] {
-    var seen = Set<String>()
-    var out: [Block] = []
-    for b in blocks {
-        let key: String
-        if trackByID, let sid = b.srcStableID {
-            let occ = b.occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
-            key = "id|\(sid)|\(occ)"
-        } else {
-            key = "t|\(b.start.timeIntervalSince1970)|\(b.end.timeIntervalSince1970)"
-        }
-        if seen.insert(key).inserted { out.append(b) }
-    }
-    return out
-}
-
-private let mirrorURLAllowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-
-private func mirrorURLComponentEncode(_ raw: String) -> String {
-    raw.addingPercentEncoding(withAllowedCharacters: mirrorURLAllowedCharacters) ?? raw
-}
-
-private func mirrorURLComponentDecode(_ raw: Substring) -> String {
-    let value = String(raw)
-    return value.removingPercentEncoding ?? value
-}
-
-private func stableSourceIdentifier(for event: EKEvent) -> String? {
-    if let external = event.calendarItemExternalIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !external.isEmpty {
-        return "ext:\(external)"
-    }
-    let local = event.calendarItemIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !local.isEmpty {
-        return "loc:\(local)"
-    }
-    if let legacy = event.eventIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !legacy.isEmpty {
-        return "evt:\(legacy)"
-    }
-    return nil
-}
-
-private func sourceOccurrenceKey(sourceCalID: String, sourceStableID: String, occurrence: Date?) -> String {
-    let occPart = occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
-    return "\(sourceCalID)|\(sourceStableID)|\(occPart)"
-}
-
-private func mirrorRecordKey(targetCalID: String, sourceKey: String) -> String {
-    "\(targetCalID)|\(sourceKey)"
-}
-
-private func mirrorTimeKey(start: Date, end: Date) -> String {
-    "\(start.timeIntervalSince1970)|\(end.timeIntervalSince1970)"
-}
-
-private func buildMirrorURL(targetCalID: String, sourceCalID: String, sourceStableID: String?, occurrence: Date?, start: Date, end: Date) -> URL? {
-    let sourceID = sourceStableID ?? ""
-    let occ = occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
-    let parts = [
-        mirrorURLComponentEncode(targetCalID),
-        mirrorURLComponentEncode(sourceCalID),
-        mirrorURLComponentEncode(sourceID),
-        occ,
-        String(start.timeIntervalSince1970),
-        String(end.timeIntervalSince1970)
-    ]
-    return URL(string: "mirror://\(parts.joined(separator: "|"))")
-}
-
-// Parse mirror URL: mirror://<tgtID>|<srcCalID>|<srcStableID>|<occTS>|<startTS>|<endTS>
-private func parseMirrorURL(_ url: URL?) -> (targetCalID: String?, sourceCalID: String?, sourceStableID: String?, occ: Date?, start: Date?, end: Date?) {
-    guard let abs = url?.absoluteString, abs.hasPrefix("mirror://") else { return (nil, nil, nil, nil, nil, nil) }
-    let body = abs.dropFirst("mirror://".count)
-    let parts = body.split(separator: "|")
-    var targetCalID: String? = nil
-    var sourceCalID: String? = nil
-    var srcID: String? = nil
-    var occDate: Date? = nil
-    var sDate: Date? = nil
-    var eDate: Date? = nil
-    if parts.count >= 1 { targetCalID = mirrorURLComponentDecode(parts[0]) }
-    if parts.count >= 2 { sourceCalID = mirrorURLComponentDecode(parts[1]) }
-    if parts.count >= 3 {
-        let decoded = mirrorURLComponentDecode(parts[2])
-        srcID = decoded.isEmpty ? nil : decoded
-    }
-    if parts.count >= 4,
-       String(parts[3]) != "-",
-       let ts = TimeInterval(String(parts[3])) {
-        occDate = Date(timeIntervalSince1970: ts)
-    }
-    if parts.count >= 6,
-       let sTS = TimeInterval(String(parts[4])),
-       let eTS = TimeInterval(String(parts[5])) {
-        sDate = Date(timeIntervalSince1970: sTS)
-        eDate = Date(timeIntervalSince1970: eTS)
-    }
-    return (targetCalID, sourceCalID, srcID, occDate, sDate, eDate)
-}
-
-// Recognize a mirrored placeholder even if URL is missing
-private func isMirrorEvent(_ ev: EKEvent, prefix: String, placeholder: String) -> Bool {
-    if ev.url?.absoluteString.hasPrefix("mirror://") ?? false { return true }
-    let t = ev.title ?? ""
-    if !prefix.isEmpty && t.hasPrefix(prefix) { return true }
-    if t == placeholder || (!prefix.isEmpty && t == (prefix + placeholder)) { return true }
-    return false
-}
-
-struct Block: Hashable {
-    let start: Date
-    let end: Date
-    let srcStableID: String?  // stable source item ID for reschedule tracking
-    let label: String?        // source title (for dry-run / non-private)
-    let notes: String?        // source notes (for optional copy)
-    let occurrence: Date?     // occurrenceDate for recurring instances
-}
-
 private struct MirrorRecord: Hashable, Codable {
     var targetCalendarID: String
     var sourceCalendarID: String
@@ -296,8 +169,8 @@ struct ContentView: View {
     @State private var routes: [Route] = []
     @AppStorage("daysForward") private var daysForward: Int = 7
     @AppStorage("daysBack") private var daysBack: Int = 1
-    @State private var mergeGapMin: Int = 0
     @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
+    private var mergeGapMin: Int { max(0, mergeGapHours * 60) }
     @AppStorage("hideDetails") private var hideDetails: Bool = true        // Privacy ON by default -> use "Busy"
     @AppStorage("copyDescription") private var copyDescription: Bool = false   // Only applies when hideDetails == false
     @AppStorage("markPrivate") private var markPrivate: Bool = false           // If ON, set event Private (server-side) when mirroring
@@ -323,10 +196,11 @@ struct ContentView: View {
     @State private var isRunning = false
     @State private var isCLIRun = false
     @State private var confirmCleanup = false
+    @State private var mirrorTask: Task<Void, Never>? = nil
+    @State private var progressText: String? = nil
     // Run-session guard: prevents the same source event from being mirrored
     // into the same target more than once across multiple routes within a
     // single "Mirror Now" click.
-    @State private var sessionGuard = Set<String>()
     @AppStorage("titlePrefix") private var titlePrefix: String = "🪞 "   // global title prefix for mirrored placeholders
     @AppStorage("placeholderTitle") private var placeholderTitle: String = "Busy"   // global customizable placeholder title
     @AppStorage("autoDeleteMissing") private var autoDeleteMissing: Bool = true       // delete mirrors whose source instance no longer exists
@@ -438,21 +312,25 @@ struct ContentView: View {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         proc.arguments = arguments
-        let output = Pipe()
-        proc.standardOutput = output
-        proc.standardError = output
+        let stdout = Pipe()
+        let stderr = Pipe()
+        proc.standardOutput = stdout
+        proc.standardError = stderr
         try proc.run()
         proc.waitUntilExit()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let outText = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let errText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let combined = [outText, errText].filter { !$0.isEmpty }.joined(separator: "\n")
         if proc.terminationStatus != 0 && !allowFailure {
             throw NSError(
                 domain: "BusyMirrorLaunchCtl",
                 code: Int(proc.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: text.isEmpty ? "launchctl failed (\(proc.terminationStatus))" : text]
+                userInfo: [NSLocalizedDescriptionKey: combined.isEmpty ? "launchctl failed (\(proc.terminationStatus))" : combined]
             )
         }
-        return text
+        return combined
     }
 
     private func installSchedule() {
@@ -474,7 +352,8 @@ struct ContentView: View {
                 "RunAtLoad": false,
                 "StandardOutPath": AppLogStore.launchdStdoutURL.path,
                 "StandardErrorPath": AppLogStore.launchdStderrURL.path,
-                "WorkingDirectory": NSHomeDirectory()
+                "WorkingDirectory": NSHomeDirectory(),
+                "EnvironmentVariables": ["HOME": NSHomeDirectory()]
             ].merging(launchAgentScheduleProperties()) { _, new in new }
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: launchAgentURL, options: .atomic)
@@ -922,12 +801,13 @@ struct ContentView: View {
         routes.removeAll { $0.id == id }
     }
 
-    private func runConfiguredRoutes(_ configuredRoutes: [Route]) async {
+    private func runConfiguredRoutes(_ configuredRoutes: [Route], sessionGuard: inout Set<String>) async {
         var ranAnyRoute = false
         var skippedMissingSource = 0
         var skippedNoTargets = 0
 
-        for r in configuredRoutes {
+        for (idx, r) in configuredRoutes.enumerated() {
+            if Task.isCancelled { break }
             guard let sIdx = indexForCalendar(id: r.sourceID) else {
                 skippedMissingSource += 1
                 continue
@@ -942,37 +822,36 @@ struct ContentView: View {
             }
 
             ranAnyRoute = true
-            let prevPrivacy = hideDetails
-            let prevCopy = copyDescription
-            let prevGapH = mergeGapHours
-            let prevGapM = mergeGapMin
-            let prevOverlap = overlapMode
-            let prevAllDay = mirrorAllDay
-            let prevMarkPrivate = markPrivate
-
+            let config = MirrorConfig(
+                daysBack: daysBack,
+                daysForward: daysForward,
+                mergeGapMin: max(0, r.mergeGapHours * 60),
+                hideDetails: r.privacy,
+                copyDescription: r.copyNotes,
+                markPrivate: r.markPrivate,
+                mirrorAllDay: r.allDay,
+                overlapMode: r.overlap,
+                titlePrefix: titlePrefix,
+                placeholderTitle: placeholderTitle,
+                filterByWorkHours: filterByWorkHours,
+                workHoursStart: workHoursStart,
+                workHoursEnd: workHoursEnd,
+                excludedTitleFilterTerms: excludedTitleFilterTerms,
+                excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
+                mirrorAcceptedOnly: mirrorAcceptedOnly,
+                autoDeleteMissing: autoDeleteMissing,
+                writeEnabled: writeEnabled
+            )
+            let srcCal = calendars[sIdx]
+            let targets = calendars.filter { validTargets.contains($0.calendarIdentifier) && $0.calendarIdentifier != srcCal.calendarIdentifier }
             await MainActor.run {
                 sourceIndex = sIdx
                 sourceID = r.sourceID
                 targetIDs = validTargets
                 targetIDs.remove(r.sourceID)
-                hideDetails = r.privacy
-                copyDescription = r.copyNotes
-                mergeGapHours = max(0, r.mergeGapHours)
-                mergeGapMin = mergeGapHours * 60
-                overlapModeRaw = r.overlap.rawValue
-                mirrorAllDay = r.allDay
-                markPrivate = r.markPrivate
+                progressText = "Route \(idx + 1) of \(configuredRoutes.count)"
             }
-            await runMirror()
-            await MainActor.run {
-                hideDetails = prevPrivacy
-                copyDescription = prevCopy
-                mergeGapHours = prevGapH
-                mergeGapMin = prevGapM
-                overlapModeRaw = prevOverlap.rawValue
-                mirrorAllDay = prevAllDay
-                markPrivate = prevMarkPrivate
-            }
+            await runMirror(config: config, sourceCalendar: srcCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: true)
         }
 
         if skippedMissingSource > 0 {
@@ -986,23 +865,71 @@ struct ContentView: View {
         }
     }
 
+    private func makeMirrorConfig() -> MirrorConfig {
+        MirrorConfig(
+            daysBack: daysBack,
+            daysForward: daysForward,
+            mergeGapMin: mergeGapMin,
+            hideDetails: hideDetails,
+            copyDescription: copyDescription,
+            markPrivate: markPrivate,
+            mirrorAllDay: mirrorAllDay,
+            overlapMode: overlapMode,
+            titlePrefix: titlePrefix,
+            placeholderTitle: placeholderTitle,
+            filterByWorkHours: filterByWorkHours,
+            workHoursStart: workHoursStart,
+            workHoursEnd: workHoursEnd,
+            excludedTitleFilterTerms: excludedTitleFilterTerms,
+            excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
+            mirrorAcceptedOnly: mirrorAcceptedOnly,
+            autoDeleteMissing: autoDeleteMissing,
+            writeEnabled: writeEnabled
+        )
+    }
+
     private func startMirrorNow() {
         guard !appController.isSyncing else { return }
+        guard mirrorTask == nil else { return }
         appController.setSyncing(true)
-        Task {
+        isRunning = true
+        progressText = nil
+        mirrorTask = Task {
             defer {
                 Task { @MainActor in
                     appController.setSyncing(false)
+                    isRunning = false
+                    mirrorTask = nil
+                    progressText = nil
                 }
             }
-            // New click -> reset the guard so we don't re-process
-            sessionGuard.removeAll()
+            var sessionGuard = Set<String>()
             if routes.isEmpty {
-                await runMirror()
+                guard calendars.indices.contains(sourceIndex) else {
+                    log("Cannot mirror: selected source is invalid.")
+                    return
+                }
+                let config = makeMirrorConfig()
+                let srcCal = calendars[sourceIndex]
+                await MainActor.run {
+                    sourceID = srcCal.calendarIdentifier
+                    enforceNoSourceInTargets()
+                }
+                let targetSet = Set(targetIDs).subtracting([srcCal.calendarIdentifier])
+                let targets = calendars.filter { targetSet.contains($0.calendarIdentifier) }
+                await runMirror(config: config, sourceCalendar: srcCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: false)
             } else {
-                await runConfiguredRoutes(routes)
+                await runConfiguredRoutes(routes, sessionGuard: &sessionGuard)
             }
         }
+    }
+
+    private func cancelMirror() {
+        mirrorTask?.cancel()
+        mirrorTask = nil
+        appController.setSyncing(false)
+        isRunning = false
+        log("Cancelled.")
     }
 
     private func handlePendingMenuBarSyncIfNeeded() {
@@ -1076,9 +1003,7 @@ struct ContentView: View {
             }
             .onChange(of: daysBack) { v in daysBack = max(0, v) }
             .onChange(of: daysForward) { v in daysForward = max(0, v) }
-            .onChange(of: mergeGapHours) { newVal in
-                mergeGapMin = max(0, newVal * 60)
-            }
+            .onChange(of: mergeGapHours) { _ in saveSettingsToDefaults() }
 
             Divider()
 
@@ -1325,7 +1250,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func logSection() -> some View {
-        TextEditor(text: $logText)
+        TextEditor(text: Binding(get: { logText }, set: { _ in }))
             .font(.system(.body, design: .monospaced))
             .frame(minHeight: 180)
             .overlay(
@@ -1370,12 +1295,25 @@ struct ContentView: View {
                                 if isRunning {
                                     statusPill("RUNNING", systemImage: "arrow.triangle.2.circlepath", fill: .orange)
                                 }
-                                Button(isRunning ? "Running…" : "Mirror Now") {
-                                    startMirrorNow()
+                                if let progressText {
+                                    Text(progressText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                                .disabled(!canRunMirrorNow)
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.large)
+                                if isRunning {
+                                    Button("Cancel") {
+                                        cancelMirror()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.large)
+                                } else {
+                                    Button("Mirror Now") {
+                                        startMirrorNow()
+                                    }
+                                    .disabled(!canRunMirrorNow)
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.large)
+                                }
                                 Button(hasAccess ? "Recheck Permission" : "Request Calendar Access") {
                                     requestAccess()
                                 }
@@ -1468,7 +1406,8 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove events identified as mirrored (by URL prefix or title prefix ‘\(titlePrefix)’) within the current window (Days back/forward) from the selected target calendars.")
+            let prefixNote = titlePrefix.isEmpty ? "" : " (title prefix ‘\(titlePrefix)’)"
+            Text("This will remove events identified as mirrored by URL prefix\(prefixNote) within the current window (Days back/forward) from the selected target calendars.")
         }
         .onAppear {
             appController.setMainWindowVisible(true)
@@ -1476,7 +1415,6 @@ struct ContentView: View {
             log("Log file: \(AppLogStore.logFileURL.path)")
             requestAccess()
             loadSettingsFromDefaults()
-            mergeGapMin = max(0, mergeGapHours * 60)
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
             handlePendingMenuBarSyncIfNeeded()
@@ -1555,7 +1493,6 @@ struct ContentView: View {
         daysForward = intArg("--days-forward", default: daysForward)
         daysBack = intArg("--days-back", default: daysBack)
         mergeGapHours = intArg("--merge-gap-hours", default: mergeGapHours)
-        mergeGapMin = max(0, mergeGapHours * 60)
         if let modeStr = strArg("--mode")?.lowercased() {
             switch modeStr {
             case "allow": overlapModeRaw = OverlapMode.allow.rawValue
@@ -1579,6 +1516,11 @@ struct ContentView: View {
             log("CLI: routes=\(routesSpec)")
         }
         Task {
+            // If permission already granted, force a sync calendar reload so
+            // the CLI doesn't race the async permission callback.
+            if hasAccess {
+                await MainActor.run { reloadCalendars() }
+            }
             // Wait up to ~10s for calendars to load
             for _ in 0..<50 {
                 if hasAccess && !calendars.isEmpty { break }
@@ -1590,6 +1532,7 @@ struct ContentView: View {
                 return
             }
 
+            let cliConfig = makeMirrorConfig()
             if runSavedRoutes {
                 if routes.isEmpty {
                     log("CLI: no saved routes; aborting")
@@ -1606,21 +1549,24 @@ struct ContentView: View {
                         }
                     }
                 } else {
-                    await runConfiguredRoutes(routes)
+                    var sessionGuard = Set<String>()
+                    await runConfiguredRoutes(routes, sessionGuard: &sessionGuard)
                 }
             } else {
                 for part in routeParts where !part.isEmpty {
-                    // Format: "S->T1,T2,T3" (indices are 1-based as shown in UI)
                     let lr = part.split(separator: "->", maxSplits: 1).map { String($0) }
                     guard lr.count == 2, let s1 = Int(lr[0].trimmingCharacters(in: .whitespaces)) else { continue }
                     let srcIdx0 = max(0, s1 - 1)
                     let tgtIdxs0: [Int] = lr[1].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces))?.advanced(by: -1) }.filter { $0 >= 0 }
                     if srcIdx0 >= calendars.count { continue }
+                    let srcCal = calendars[srcIdx0]
+                    let targetSet = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil }).subtracting([srcCal.calendarIdentifier])
+                    let targets = calendars.filter { targetSet.contains($0.calendarIdentifier) }
                     await MainActor.run {
                         sourceIndex = srcIdx0
-                        sourceID = calendars[srcIdx0].calendarIdentifier
+                        sourceID = srcCal.calendarIdentifier
                         targetSelections = Set(tgtIdxs0)
-                        targetIDs = Set(tgtIdxs0.compactMap { i in calendars.indices.contains(i) ? calendars[i].calendarIdentifier : nil })
+                        targetIDs = targetSet
                     }
 
                     if boolArg("--cleanup-only", default: false) {
@@ -1628,7 +1574,8 @@ struct ContentView: View {
                         await runCleanup()
                     } else {
                         log("CLI: mirror route \(part)")
-                        await runMirror()
+                        var sessionGuard = Set<String>()
+                        await runMirror(config: cliConfig, sourceCalendar: srcCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: false)
                     }
                 }
             }
@@ -1695,7 +1642,7 @@ struct ContentView: View {
     }
     
     // MARK: - Mirror engine (EventKit)
-    func runMirror() async {
+    func runMirror(config: MirrorConfig, sourceCalendar: EKCalendar, targetCalendars: [EKCalendar], sessionGuard: inout Set<String>, isMultiRouteRun: Bool) async {
         guard hasAccess else {
             log("Cannot mirror: calendar access is not granted.")
             return
@@ -1704,25 +1651,9 @@ struct ContentView: View {
             log("Cannot mirror: no calendars loaded. Try Refresh Calendars.")
             return
         }
-        guard calendars.indices.contains(sourceIndex) else {
-            log("Cannot mirror: selected source is invalid.")
-            return
-        }
-        isRunning = true
-        defer { isRunning = false }
-
-        let srcCal = calendars[sourceIndex]
-        // Ensure sourceID is set when we start
-        sourceID = srcCal.calendarIdentifier
-        // Extra safety: drop source from targets before computing them
-        enforceNoSourceInTargets()
+        let srcCal = sourceCalendar
         let srcName = calLabel(srcCal)
-        // Build targets by identifier to be robust against index/order changes
-        let targetSet = Set(targetIDs)
-        // Additional guard: log and strip if source sneaks into targets
-        if targetSet.contains(srcCal.calendarIdentifier) { log("- WARN: source is present in targets, removing: \(srcName)") }
-        let targetSetNoSrc = targetSet.subtracting([srcCal.calendarIdentifier])
-        let targets = calendars.filter { targetSetNoSrc.contains($0.calendarIdentifier) }
+        let targets = targetCalendars.filter { $0.calendarIdentifier != srcCal.calendarIdentifier }
         if targets.isEmpty {
             log("No target calendars selected. Choose at least one target or add a route with valid targets.")
             return
@@ -1730,19 +1661,18 @@ struct ContentView: View {
 
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
-        let windowStart = cal.date(byAdding: .day, value: -daysBack, to: todayStart)!
-        let windowEnd = cal.date(byAdding: .day, value: daysForward, to: todayStart)!
+        let windowStart = cal.date(byAdding: .day, value: -config.daysBack, to: todayStart)!
+        let windowEnd = cal.date(byAdding: .day, value: config.daysForward, to: todayStart)!
         log("=== BusyMirror ===")
         log("Source: \(srcName)  Targets: \(targets.map { calLabel($0) }.joined(separator: ", "))")
         log("Window: \(windowStart) -> \(windowEnd)")
-        log("WRITE: \(writeEnabled) \(writeEnabled ? "" : "(DRY-RUN)")  mode: \(overlapMode.rawValue)  mergeGapMin: \(mergeGapMin)  allDay: \(mirrorAllDay)")
+        log("WRITE: \(config.writeEnabled) \(config.writeEnabled ? "" : "(DRY-RUN)")  mode: \(config.overlapMode.rawValue)  mergeGapMin: \(config.mergeGapMin)  allDay: \(config.mirrorAllDay)")
         log("Route: \(srcName) → {\(targets.map { calLabel($0) }.joined(separator: ", "))}")
 
         // Source events (recurrences expanded by EventKit)
         let srcPred = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [srcCal])
         var srcEvents = store.events(matching: srcPred)
         let srcFetched = srcEvents.count
-        // HARD FILTER: even if EventKit returns events from other calendars, keep only exact source calendar
         srcEvents = srcEvents.filter { $0.calendar.calendarIdentifier == srcCal.calendarIdentifier }
         let srcKept = srcEvents.count
         if srcKept != srcFetched {
@@ -1752,18 +1682,18 @@ struct ContentView: View {
 
         var srcBlocks: [Block] = []
         var skippedMirrors = 0
-        let titleFilters = excludedTitleFilterTerms
-        let organizerFilters = excludedOrganizerFilterTerms
-        let enforceWorkHours = filterByWorkHours && workHoursEnd > workHoursStart
-        let allowedStartMinutes = workHoursStart * 60
-        let allowedEndMinutes = workHoursEnd * 60
+        let titleFilters = config.excludedTitleFilterTerms
+        let organizerFilters = config.excludedOrganizerFilterTerms
+        let enforceWorkHours = config.filterByWorkHours && config.workHoursEnd > config.workHoursStart
+        let allowedStartMinutes = config.workHoursStart * 60
+        let allowedEndMinutes = config.workHoursEnd * 60
         var skippedWorkHours = 0
         var skippedTitles = 0
         var skippedOrganizers = 0
         var skippedStatus = 0
         for ev in srcEvents {
-            if mirrorAcceptedOnly, ev.hasAttendees {
-                // Only include events where the current user's attendee status is Accepted
+            if Task.isCancelled { break }
+            if config.mirrorAcceptedOnly, ev.hasAttendees {
                 let attendees = ev.attendees ?? []
                 if let me = attendees.first(where: { $0.isCurrentUser }) {
                     if me.participantStatus != .accepted {
@@ -1771,7 +1701,6 @@ struct ContentView: View {
                         continue
                     }
                 } else {
-                    // If we cannot determine a self attendee, treat as not accepted
                     skippedStatus += 1
                     continue
                 }
@@ -1781,22 +1710,20 @@ struct ContentView: View {
                 skippedWorkHours += 1
                 continue
             }
-            if shouldSkip(event: ev, filters: titleFilters) {
+            if shouldSkip(title: ev.title, filters: titleFilters, titlePrefix: config.titlePrefix) {
                 skippedTitles += 1
                 continue
             }
-            if shouldSkipOrganizer(event: ev, filters: organizerFilters) {
+            if shouldSkipOrganizer(organizerValues: organizerStrings(for: ev), filters: organizerFilters) {
                 skippedOrganizers += 1
                 continue
             }
-            if SKIP_ALL_DAY_DEFAULT == true && mirrorAllDay == false && ev.isAllDay { continue }
-            if isMirrorEvent(ev, prefix: titlePrefix, placeholder: placeholderTitle) {
-                // Aggregate skip count for mirrored-on-source
+            if !config.mirrorAllDay && ev.isAllDay { continue }
+            if isMirrorEvent(ev, prefix: config.titlePrefix, placeholder: config.placeholderTitle) {
                 skippedMirrors += 1
                 continue
             }
             guard let s = ev.startDate, let e = ev.endDate, e > s else { continue }
-            // Defensive: never treat events from another calendar as source
             guard ev.calendar.calendarIdentifier == srcCal.calendarIdentifier else { continue }
             let srcID = stableSourceIdentifier(for: ev)
             srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate))
@@ -1816,12 +1743,10 @@ struct ContentView: View {
         if skippedStatus > 0 {
             log("- SKIP non-accepted status: \(skippedStatus) event(s)")
         }
-        // Deduplicate source blocks to avoid duplicates from EventKit (recurrences / sync races)
-        srcBlocks = uniqueBlocks(srcBlocks, trackByID: mergeGapMin == 0)
+        srcBlocks = uniqueBlocks(srcBlocks, trackByID: config.mergeGapMin == 0)
 
-        // Merge for Flights or similar
-        let baseBlocks = (mergeGapMin > 0) ? mergeBlocks(srcBlocks, gapMinutes: mergeGapMin) : srcBlocks
-        let trackByID = (mergeGapMin == 0)
+        let baseBlocks = (config.mergeGapMin > 0) ? mergeBlocks(srcBlocks, gapMinutes: config.mergeGapMin) : srcBlocks
+        let trackByID = (config.mergeGapMin == 0)
         var mirrorIndex = loadMirrorIndex()
         var mirrorIndexChanged = false
 
@@ -1830,21 +1755,29 @@ struct ContentView: View {
             return sourceOccurrenceKey(sourceCalID: srcCal.calendarIdentifier, sourceStableID: sid, occurrence: blk.occurrence)
         }
 
+        // Cache target events across routes when possible
+        var targetEventCache: [String: [EKEvent]] = [:]
         for tgt in targets {
+            if Task.isCancelled { break }
             let tgtName = calLabel(tgt)
             log(">>> Target: \(tgtName)")
             if tgt.calendarIdentifier == srcCal.calendarIdentifier {
                 log("- SKIP target is same as source: \(tgtName)")
                 continue
             }
-            // Prefetch target window
-            let tgtPred = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [tgt])
-            var tgtEvents = store.events(matching: tgtPred)
-            let tgtFetched = tgtEvents.count
-            // HARD FILTER: ensure we only consider events truly on the target calendar
-            tgtEvents = tgtEvents.filter { $0.calendar.calendarIdentifier == tgt.calendarIdentifier }
-            if tgtFetched != tgtEvents.count {
-                log("- WARN: filtered \(tgtFetched - tgtEvents.count) stray target event(s) not in \(tgtName)")
+            let tgtEvents: [EKEvent]
+            if let cached = targetEventCache[tgt.calendarIdentifier] {
+                tgtEvents = cached
+            } else {
+                let tgtPred = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [tgt])
+                var evs = store.events(matching: tgtPred)
+                let tgtFetched = evs.count
+                evs = evs.filter { $0.calendar.calendarIdentifier == tgt.calendarIdentifier }
+                if tgtFetched != evs.count {
+                    log("- WARN: filtered \(tgtFetched - evs.count) stray target event(s) not in \(tgtName)")
+                }
+                targetEventCache[tgt.calendarIdentifier] = evs
+                tgtEvents = evs
             }
 
             var placeholderSet = Set<String>()
@@ -1859,7 +1792,7 @@ struct ContentView: View {
                 }
                 if let ts = tv.startDate, let te = tv.endDate {
                     let timeKey = mirrorTimeKey(start: ts, end: te)
-                    if isMirrorEvent(tv, prefix: titlePrefix, placeholder: placeholderTitle) {
+                    if isMirrorEvent(tv, prefix: config.titlePrefix, placeholder: config.placeholderTitle) {
                         placeholderSet.insert(timeKey)
                         placeholdersByTime[timeKey] = tv
                         let parsed = parseMirrorURL(tv.url)
@@ -1903,7 +1836,7 @@ struct ContentView: View {
             }
 
             func desiredNotes(for blk: Block) -> String? {
-                (!hideDetails && copyDescription) ? blk.notes : nil
+                (!config.hideDetails && config.copyDescription) ? blk.notes : nil
             }
 
             func upsertMirrorRecord(for blk: Block, event: EKEvent) {
@@ -1978,10 +1911,10 @@ struct ContentView: View {
                     return
                 }
 
-                let baseSourceTitle = stripPrefix(blk.label, prefix: titlePrefix)
-                let effectiveTitle = hideDetails ? placeholderTitle : (baseSourceTitle.isEmpty ? placeholderTitle : baseSourceTitle)
-                let titleSuffix = hideDetails ? "" : (baseSourceTitle.isEmpty ? "" : " — \(baseSourceTitle)")
-                let displayTitle = (titlePrefix.isEmpty ? "" : titlePrefix) + effectiveTitle
+                let baseSourceTitle = stripPrefix(blk.label, prefix: config.titlePrefix)
+                let effectiveTitle = config.hideDetails ? config.placeholderTitle : (baseSourceTitle.isEmpty ? config.placeholderTitle : baseSourceTitle)
+                let titleSuffix = config.hideDetails ? "" : (baseSourceTitle.isEmpty ? "" : " — \(baseSourceTitle)")
+                let displayTitle = (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + effectiveTitle
                 let notes = desiredNotes(for: blk)
                 let desiredURL = buildMirrorURL(
                     targetCalID: tgt.calendarIdentifier,
@@ -2004,7 +1937,7 @@ struct ContentView: View {
                         return
                     }
                     let byTimeSuffix = byTime ? " (by time)" : ""
-                    if !writeEnabled {
+                    if !config.writeEnabled {
                         sessionGuard.insert(gKey)
                         log("~ WOULD UPDATE [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(curS) -> \(curE)  TO  \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
                         updated += 1
@@ -2016,8 +1949,8 @@ struct ContentView: View {
                     existing.isAllDay = false
                     existing.notes = notes
                     existing.url = desiredURL
-                    let ok = setEventPrivateIfSupported(existing, markPrivate)
-                    if markPrivate && !ok && !warnedPrivateUnsupported {
+                    let ok = setEventPrivateIfSupported(existing, config.markPrivate)
+                    if config.markPrivate && !ok && !warnedPrivateUnsupported {
                         log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
                         warnedPrivateUnsupported = true
                     }
@@ -2056,7 +1989,7 @@ struct ContentView: View {
                     skipped += 1
                     return
                 }
-                if !writeEnabled {
+                if !config.writeEnabled {
                     sessionGuard.insert(gKey)
                     log("+ WOULD CREATE [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
                     return
@@ -2075,8 +2008,8 @@ struct ContentView: View {
                 newEv.notes = notes
                 newEv.url = desiredURL
                 newEv.availability = .busy
-                let okNew = setEventPrivateIfSupported(newEv, markPrivate)
-                if markPrivate && !okNew && !warnedPrivateUnsupported {
+                let okNew = setEventPrivateIfSupported(newEv, config.markPrivate)
+                if config.markPrivate && !okNew && !warnedPrivateUnsupported {
                     log("- INFO: Mark Private not supported for \(tgtName) [source: \(tgt.source.title)]")
                     warnedPrivateUnsupported = true
                 }
@@ -2095,7 +2028,8 @@ struct ContentView: View {
             }
 
             for b in baseBlocks {
-                switch overlapMode {
+                if Task.isCancelled { break }
+                switch config.overlapMode {
                 case .allow:
                     await createOrUpdateIfNeeded(b)
                 case .skipCovered:
@@ -2116,10 +2050,9 @@ struct ContentView: View {
                 }
             }
             log("[Summary → \(tgtName)] created=\(created), updated=\(updated), skipped=\(skipped)")
-            if autoDeleteMissing {
+            if config.autoDeleteMissing {
                 let activeSourceKeys = Set(baseBlocks.compactMap { sourceKey(for: $0) })
                 let validTimeKeys = Set(baseBlocks.map { mirrorTimeKey(start: $0.start, end: $0.end) })
-                let isMultiRouteRun = !routes.isEmpty
 
                 var byID: [String: EKEvent] = [:]
                 for tv in placeholdersByTime.values {
@@ -2139,9 +2072,10 @@ struct ContentView: View {
                 }
 
                 for (recordKey, record) in staleMirrorRecords {
+                    if Task.isCancelled { break }
                     let candidate = resolveMappedEvent(for: record)
                     if let candidate {
-                        if !writeEnabled {
+                        if !config.writeEnabled {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(candidate.startDate ?? windowStart) -> \(candidate.endDate ?? windowEnd)")
                         } else {
                             do {
@@ -2157,7 +2091,7 @@ struct ContentView: View {
                             handledEventIDs.insert(eid)
                         }
                     }
-                    if writeEnabled || candidate == nil {
+                    if config.writeEnabled || candidate == nil {
                         if mirrorIndex.removeValue(forKey: recordKey) != nil {
                             mirrorIndexChanged = true
                         }
@@ -2165,6 +2099,7 @@ struct ContentView: View {
                 }
 
                 for ev in byID.values {
+                    if Task.isCancelled { break }
                     if let eid = ev.eventIdentifier, handledEventIDs.contains(eid) {
                         continue
                     }
@@ -2204,7 +2139,7 @@ struct ContentView: View {
                         continue
                     }
                     if shouldDelete {
-                        if !writeEnabled {
+                        if !config.writeEnabled {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
                         } else {
                             do {
@@ -2248,7 +2183,7 @@ private struct SettingsPayload: Codable {
     var workHoursStart: Int = 9
     var workHoursEnd: Int = 17
     var excludedTitleFilters: [String] = []
-    var excludedOrganizerFilters: [String]? = nil
+    var excludedOrganizerFilters: [String] = []
     var mirrorAcceptedOnly: Bool = false
     var overlapMode: String
     var titlePrefix: String
@@ -2294,7 +2229,6 @@ private struct SettingsPayload: Codable {
         daysBack = s.daysBack
         daysForward = s.daysForward
         mergeGapHours = s.mergeGapHours
-        mergeGapMin = max(0, s.mergeGapHours * 60)
         hideDetails = s.hideDetails
         copyDescription = s.copyDescription
         mirrorAllDay = s.mirrorAllDay
@@ -2303,9 +2237,7 @@ private struct SettingsPayload: Codable {
         workHoursStart = s.workHoursStart
         workHoursEnd = s.workHoursEnd
         excludedTitleFiltersRaw = s.excludedTitleFilters.joined(separator: "\n")
-        if let orgs = s.excludedOrganizerFilters {
-            excludedOrganizerFiltersRaw = orgs.joined(separator: "\n")
-        }
+        excludedOrganizerFiltersRaw = s.excludedOrganizerFilters.joined(separator: "\n")
         mirrorAcceptedOnly = s.mirrorAcceptedOnly
         overlapMode = OverlapMode(rawValue: s.overlapMode) ?? .allow
         titlePrefix = s.titlePrefix
@@ -2396,15 +2328,6 @@ private struct SettingsPayload: Codable {
 
     // MARK: - Filters
 
-    private func isOutsideWorkHours(_ startDate: Date, calendar: Calendar, startMinutes: Int, endMinutes: Int) -> Bool {
-        guard endMinutes > startMinutes else { return false }
-        let comps = calendar.dateComponents([.hour, .minute], from: startDate)
-        guard let hour = comps.hour else { return false }
-        let minute = comps.minute ?? 0
-        let start = hour * 60 + minute
-        return start < startMinutes || start >= endMinutes
-    }
-
     // Best-effort: mark an event as Private if the account/server supports it.
     // Uses ObjC selector lookup to avoid crashes on unsupported keys.
     private func setEventPrivateIfSupported(_ ev: EKEvent, _ flag: Bool) -> Bool {
@@ -2430,64 +2353,10 @@ private struct SettingsPayload: Codable {
             ("classification", 1) // iCalendar CLASS: 1 might map to PRIVATE
         ]
         for (key, val) in kvPairs {
-            do {
-                ev.setValue(val, forKey: key)
-                return true
-            } catch {
-                // ignore and try next
-            }
+            ev.setValue(val, forKey: key)
+            return true
         }
         // Not supported; no-op
-        return false
-    }
-
-    private func shouldSkip(event: EKEvent, filters: [String]) -> Bool {
-        guard !filters.isEmpty else { return false }
-        let rawTitle = (event.title ?? "").lowercased()
-        let strippedTitle = stripPrefix(event.title, prefix: titlePrefix).lowercased()
-        return filters.contains { token in
-            rawTitle.contains(token) || strippedTitle.contains(token)
-        }
-    }
-
-    // Organizer filters
-    private func organizerEmail(_ participant: EKParticipant?) -> String? {
-        guard let url = participant?.url else { return nil }
-        if url.scheme?.lowercased() == "mailto" {
-            let abs = url.absoluteString
-            if abs.lowercased().hasPrefix("mailto:") {
-                return String(abs.dropFirst("mailto:".count))
-            }
-            return abs
-        }
-        return url.absoluteString
-    }
-
-    private func organizerStrings(for event: EKEvent) -> [String] {
-        var out: [String] = []
-        if let org = event.organizer {
-            if let n = org.name, !n.isEmpty { out.append(n) }
-            if let e = organizerEmail(org), !e.isEmpty { out.append(e) }
-        }
-        // Fallback: some providers may not populate organizer; try chair attendee
-        if out.isEmpty, let attendees = event.attendees {
-            if let chair = attendees.first(where: { $0.participantRole == .chair }) {
-                if let n = chair.name, !n.isEmpty { out.append(n) }
-                if let e = organizerEmail(chair), !e.isEmpty { out.append(e) }
-            }
-        }
-        return out
-    }
-
-    private func shouldSkipOrganizer(event: EKEvent, filters: [String]) -> Bool {
-        guard !filters.isEmpty else { return false }
-        let vals = organizerStrings(for: event).map { $0.lowercased() }
-        guard !vals.isEmpty else { return false }
-        for token in filters {
-            for v in vals {
-                if v.contains(token) { return true }
-            }
-        }
         return false
     }
 
@@ -2507,61 +2376,21 @@ private struct SettingsPayload: Codable {
         AppLogStore.append(s)
         DispatchQueue.main.async {
             logText.append("\n" + s)
+            let maxLines = 2000
+            let lines = logText.split(separator: "\n", omittingEmptySubsequences: false)
+            if lines.count > maxLines {
+                logText = lines.suffix(maxLines).joined(separator: "\n")
+            }
         }
     }
     
-    // MARK: - Block helpers
-    func key(_ b: Block) -> String {
-        "\(b.start.timeIntervalSince1970)|\(b.end.timeIntervalSince1970)"
-    }
-    func mergeBlocks(_ blocks: [Block], gapMinutes: Int) -> [Block] {
-        guard !blocks.isEmpty else { return [] }
-        let sorted = blocks.sorted { $0.start < $1.start }
-        var out: [Block] = []
-        var cur = Block(start: sorted[0].start, end: sorted[0].end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
-        for b in sorted.dropFirst() {
-            let gap = b.start.timeIntervalSince(cur.end) / 60.0
-            if gap <= Double(gapMinutes) {
-                if b.end > cur.end { cur = Block(start: cur.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil) }
-            } else {
-                out.append(cur)
-                cur = Block(start: b.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
-            }
-        }
-        out.append(cur)
-        return out
-    }
-    func coalesce(_ segs: [Block]) -> [Block] { mergeBlocks(segs, gapMinutes: 0) }
-    func fullyCovered(_ mergedSegs: [Block], block: Block, tolMin: Double) -> Bool {
-        for s in mergedSegs {
-            if s.start <= block.start.addingTimeInterval(tolMin*60),
-               s.end   >= block.end.addingTimeInterval(-tolMin*60) { return true }
-        }
-        return false
-    }
-    func gapsWithin(_ mergedSegs: [Block], in block: Block) -> [Block] {
-        if mergedSegs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
-        var segs: [Block] = []
-        for s in mergedSegs where s.end > block.start && s.start < block.end {
-            let ss = max(s.start, block.start)
-            let ee = min(s.end, block.end)
-            if ee > ss { segs.append(Block(start: ss, end: ee, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
-        }
-        if segs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
-        let merged = coalesce(segs)
-        var gaps: [Block] = []
-        var prevEnd = block.start
-        for s in merged {
-            if s.start > prevEnd { gaps.append(Block(start: prevEnd, end: s.start, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
-            if s.end > prevEnd { prevEnd = s.end }
-        }
-        if prevEnd < block.end { gaps.append(Block(start: prevEnd, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
-        return gaps
-    }
-
 // MARK: - Cleanup: delete Busy placeholders in the active window on selected targets
     func runCleanup() async {
     guard hasAccess, !calendars.isEmpty else { return }
+    guard calendars.indices.contains(sourceIndex) else {
+        log("Cannot cleanup: selected source is invalid.")
+        return
+    }
     isRunning = true
     defer { isRunning = false }
 

@@ -11,6 +11,7 @@
 - 1.3.4: persistent file logging, stale-calendar pruning on refresh, clickable top-bar mode toggle
 - 1.3.6: in-app scheduling via `launchd` with hourly/daily/weekday modes
 - 1.3.6: generated macOS app icon set and packaged release assets
+- 1.4.0: unit-test suite (45 tests), Cancel button, progress indicator, sandbox LaunchAgent fix, mirror URL fix, engine refactor into `MirrorConfig`
 
 ## Next
 - Auto-refresh calendars on `EKEventStoreChanged` (live refresh button-less)

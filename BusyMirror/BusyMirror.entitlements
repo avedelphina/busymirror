@@ -8,5 +8,9 @@
 	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+	<array>
+		<string>Library/LaunchAgents/</string>
+	</array>
 </dict>
 </plist>
