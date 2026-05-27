@@ -2,6 +2,19 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.5.0] - 2026-05-27
+
+### Removed
+- **Mark Private feature**: removed the non-functional server-side "Private" flagging for mirrored events. The Objective-C runtime hack (`setPrivate:`, KVC on `sensitivity`/`classification`) never worked reliably and would have blocked App Store review. This simplifies the UI and removes a private-API liability.
+
+### Changed
+- **Extracted mirror engine**: the ~500-line `runMirror` and `runCleanup` logic has been moved from `ContentView.swift` into a new `MirrorEngine.swift` class. `ContentView` now delegates to the engine via `makeEngine()`.
+- `MirrorRecord`, mirror index persistence, and `SAME_TIME_TOL_MIN` now live in the engine module.
+- `calLabel` moved to `MirrorUtils.swift` so it can be shared between UI and engine.
+
+### Build
+- Bump version to **1.5.0** (build **19**).
+
 ## [1.4.0] - 2026-05-27
 
 ### Fixed

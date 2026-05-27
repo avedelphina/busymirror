@@ -1,6 +1,12 @@
 import Foundation
 import EventKit
 
+// Calendar label helper to disambiguate identical names
+func calLabel(_ cal: EKCalendar) -> String {
+    let src = cal.source.title
+    return src.isEmpty ? cal.title : "\(cal.title) — \(src)"
+}
+
 // Remove our prefix when building titles so it never doubles up
 func stripPrefix(_ title: String?, prefix: String) -> String {
     guard let t = title else { return "" }

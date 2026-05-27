@@ -7,7 +7,6 @@ struct MirrorConfig {
     let mergeGapMin: Int
     let hideDetails: Bool
     let copyDescription: Bool
-    let markPrivate: Bool
     let mirrorAllDay: Bool
     let overlapMode: OverlapMode
     let titlePrefix: String

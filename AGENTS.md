@@ -10,7 +10,7 @@ It is a single-platform macOS app written in **Swift 5** and **SwiftUI**, using 
 
 Key capabilities:
 - Manual or route-driven multi-source mirroring
-- Privacy modes: hide details (placeholder title) or mark events Private server-side (best-effort)
+- Privacy mode: hide details (placeholder title)
 - DRY-RUN mode to preview changes without writing
 - Scheduled headless runs via a self-installed `launchd` LaunchAgent
 - Settings autosave/restore, plus Import/Export JSON
@@ -36,7 +36,12 @@ No external Swift Package Manager dependencies are used. The project is self-con
 ```
 BusyMirror/
 ├── BusyMirrorApp.swift          # App entry point; defines Window + MenuBarExtra
-├── ContentView.swift            # Main UI, mirror engine, settings, CLI, scheduling (≈2600 lines)
+├── ContentView.swift            # Main UI, settings, CLI, scheduling (≈1800 lines)
+├── MirrorEngine.swift           # EventKit mirror engine (read, deduplicate, merge, create/update/delete)
+├── MirrorConfig.swift           # Configuration struct passed to the engine
+├── MirrorUtils.swift            # URL builders, mirror detection, calendar labels
+├── BlockMath.swift              # Block merging, gap calculation, overlap logic
+├── EventFilters.swift           # Work-hours, title, and organizer filters
 ├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator) + menu bar view
 ├── Info.plist                   # LSUIElement, calendar usage descriptions
 ├── BusyMirror.entitlements      # App sandbox + calendar access entitlement
@@ -47,15 +52,9 @@ BusyMirrorTests/                 # Empty (no tests implemented)
 BusyMirrorUITests/               # Empty (no tests implemented)
 ```
 
-**Architecture note:** nearly all business logic lives inside `ContentView.swift`. This includes:
-- SwiftUI view body and subviews
-- EventKit mirror engine (read, deduplicate, merge, create/update/delete)
-- Settings serialization/deserialization
-- CLI argument parsing
-- `launchd` LaunchAgent installation/removal
-- Logging to file and UI
+**Architecture note:** `ContentView.swift` handles the SwiftUI view hierarchy, settings serialization, CLI argument parsing, `launchd` scheduling, and logging. The EventKit mirror engine lives in `MirrorEngine.swift` and is invoked from `ContentView` via `makeEngine()`. Pure helper logic (block math, filters, URL utilities) has been extracted into standalone files for testability.
 
-When making changes, be aware that `ContentView.swift` is a large monolithic file. Extracting helpers is fine, but keep the existing data flow ( `@EnvironmentObject`, `@AppStorage`, `@State`) intact.
+When making changes, keep the existing data flow (`@EnvironmentObject`, `@AppStorage`, `@State`) intact in `ContentView.swift`.
 
 ## Build and Release Commands
 
@@ -96,8 +95,8 @@ Built products:
 
 ## Testing
 
-- **There are no implemented tests.** `BusyMirrorTests/` and `BusyMirrorUITests/` exist as Xcode targets but contain no source files.
-- When adding logic, prefer extracting pure functions (e.g., block merging, gap calculation, filter logic) so they can be unit-tested later.
+- Unit tests exist in `BusyMirrorTests/` for `BlockMath`, `EventFilters`, and `MirrorUtils`.
+- When adding logic, prefer extracting pure functions (e.g., block merging, gap calculation, filter logic) so they can be unit-tested.
 - Manual testing checklist for releases:
   1. Grant Calendar permission.
   2. Select a source and target, run DRY-RUN, verify log output.
@@ -112,7 +111,6 @@ Built products:
 - **Calendar data:** the app reads and writes the user’s calendars via EventKit. It must handle permission denial gracefully.
 - **Sandbox:** the app uses the macOS app sandbox (`com.apple.security.app-sandbox`) and the `com.apple.security.personal-information.calendars` entitlement.
 - **Signing:** releases are ad-hoc signed only (`codesign --sign -`). They are **not notarized**. Gatekeeper may block the app on first launch; users may need to right-click → Open.
-- **Private events:** the "Mark Private" feature uses Objective-C runtime tricks (`perform(Selector:)`, KVC `setValue:forKey:`) because EventKit does not expose a public privacy API. This is best-effort and may silently fail on some calendar providers (e.g., some Exchange configurations).
 - **Loop guard:** a `sessionGuard` set prevents mirroring an event into the same target twice in one run, and prefix-based detection (`titlePrefix`) prevents re-mirroring already-mirrored placeholders.
 - **Logging:** log files are written to the user’s `~/Library/Logs/BusyMirror/`. No log data is transmitted externally.
 
@@ -136,7 +134,12 @@ Scheduled runs are implemented by generating a `launchd` plist in `~/Library/Lau
 
 | File | Purpose |
 |------|---------|
-| `BusyMirror/ContentView.swift` | UI, business logic, mirror engine, settings, CLI, scheduling |
+| `BusyMirror/ContentView.swift` | UI, settings, CLI, scheduling |
+| `BusyMirror/MirrorEngine.swift` | EventKit mirror engine (runMirror, runCleanup, index persistence) |
+| `BusyMirror/MirrorConfig.swift` | Configuration struct for mirror runs |
+| `BusyMirror/MirrorUtils.swift` | Mirror URL builders, event detection, calendar labels |
+| `BusyMirror/BlockMath.swift` | Block merging, gap calculation, overlap logic |
+| `BusyMirror/EventFilters.swift` | Work-hours, title, and organizer filters |
 | `BusyMirror/BusyMirrorApp.swift` | App struct, window scene, menu-bar extra |
 | `BusyMirror/MenuBarSupport.swift` | `@MainActor` app controller + menu bar SwiftUI view |
 | `BusyMirror/Info.plist` | `LSUIElement`, calendar usage descriptions |
@@ -149,6 +152,6 @@ Scheduled runs are implemented by generating a `launchd` plist in `~/Library/Lau
 
 - Do **not** add third-party dependencies unless the user explicitly asks. The project intentionally has zero external packages.
 - If you refactor `ContentView.swift`, preserve `@AppStorage` keys and `UserDefaults` keys exactly; users have existing settings on disk.
-- The mirror engine is tightly coupled to SwiftUI state. Extract helpers for testability, but do not break the `@MainActor`/`@State` flow without careful review.
+- The mirror engine (`MirrorEngine.swift`) is `@MainActor` and accepts an `EKEventStore` plus a logging closure. It does not directly mutate SwiftUI `@State`; `ContentView` manages all view state.
 - When modifying build settings, update both Debug and Release configurations in `project.pbxproj`, and update `CHANGELOG.md` if the change is user-visible.
 - Do not run `git commit`, `git push`, or similar operations unless explicitly asked.
