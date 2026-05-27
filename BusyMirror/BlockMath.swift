@@ -7,6 +7,11 @@ struct Block: Hashable {
     let label: String?        // source title (for dry-run / non-private)
     let notes: String?        // source notes (for optional copy)
     let occurrence: Date?     // occurrenceDate for recurring instances
+
+    /// Convenience factory for time-only blocks (used internally for occupancy tracking).
+    static func span(start: Date, end: Date) -> Block {
+        Block(start: start, end: end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
+    }
 }
 
 // De-dup blocks by occurrence (preferred) or by time range
@@ -30,14 +35,14 @@ func mergeBlocks(_ blocks: [Block], gapMinutes: Int) -> [Block] {
     guard !blocks.isEmpty else { return [] }
     let sorted = blocks.sorted { $0.start < $1.start }
     var out: [Block] = []
-    var cur = Block(start: sorted[0].start, end: sorted[0].end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
+    var cur = Block.span(start: sorted[0].start, end: sorted[0].end)
     for b in sorted.dropFirst() {
         let gap = b.start.timeIntervalSince(cur.end) / 60.0
         if gap <= Double(gapMinutes) {
-            if b.end > cur.end { cur = Block(start: cur.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil) }
+            if b.end > cur.end { cur = Block.span(start: cur.start, end: b.end) }
         } else {
             out.append(cur)
-            cur = Block(start: b.start, end: b.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
+            cur = Block.span(start: b.start, end: b.end)
         }
     }
     out.append(cur)
@@ -55,21 +60,21 @@ func fullyCovered(_ mergedSegs: [Block], block: Block, tolMin: Double) -> Bool {
 }
 
 func gapsWithin(_ mergedSegs: [Block], in block: Block) -> [Block] {
-    if mergedSegs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
+    if mergedSegs.isEmpty { return [Block.span(start: block.start, end: block.end)] }
     var segs: [Block] = []
     for s in mergedSegs where s.end > block.start && s.start < block.end {
         let ss = max(s.start, block.start)
         let ee = min(s.end, block.end)
-        if ee > ss { segs.append(Block(start: ss, end: ee, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
+        if ee > ss { segs.append(Block.span(start: ss, end: ee)) }
     }
-    if segs.isEmpty { return [Block(start: block.start, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)] }
+    if segs.isEmpty { return [Block.span(start: block.start, end: block.end)] }
     let merged = coalesce(segs)
     var gaps: [Block] = []
     var prevEnd = block.start
     for s in merged {
-        if s.start > prevEnd { gaps.append(Block(start: prevEnd, end: s.start, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
+        if s.start > prevEnd { gaps.append(Block.span(start: prevEnd, end: s.start)) }
         if s.end > prevEnd { prevEnd = s.end }
     }
-    if prevEnd < block.end { gaps.append(Block(start: prevEnd, end: block.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)) }
+    if prevEnd < block.end { gaps.append(Block.span(start: prevEnd, end: block.end)) }
     return gaps
 }

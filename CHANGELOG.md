@@ -2,6 +2,28 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.5.1] - 2026-05-27
+
+### Fixed
+- **Mirror index dirtied on every sync**: `MirrorRecord` used synthesized `Equatable` which included `updatedAt: Date = Date()`. Because `updatedAt` is set to the current time whenever a record is constructed, the comparison used to detect changes always returned "not equal", causing `UserDefaults` to be written on every sync run even when nothing changed. A custom `==` / `hash(into:)` now excludes `updatedAt`. ([MirrorEngine.swift](BusyMirror/MirrorEngine.swift))
+- **Mirror URL corruption with special characters in calendar IDs**: `buildMirrorURL` placed raw calendar and source IDs into the URL path without percent-encoding them. If any ID contained the `;` separator character the resulting URL would be mis-parsed on the next sync. `mirrorURLComponentEncode` (which already existed and was tested) is now called on all ID fields before they are joined. The path is set via `percentEncodedPath` to prevent `URLComponents` from double-encoding the already-encoded values. ([MirrorUtils.swift](BusyMirror/MirrorUtils.swift))
+- **Dead constant**: removed unused `SKIP_ALL_DAY_DEFAULT = true` from `ContentView.swift`.
+- **Deprecated `FileHandle` API**: replaced `FileHandle(forWritingAtPath:)` + `handle.closeFile()` with the modern throwing `FileHandle(forWritingTo:)`, `handle.seekToEnd()`, and `handle.write(contentsOf:)` in `AppLogStore`. ([AppLogStore.swift](BusyMirror/AppLogStore.swift))
+- **Cleanup jumps calendar picker**: `runCleanupForRoute` was mutating `sourceIndex`, `sourceID`, and `targetIDs` during route cleanup, visibly shifting the picker in the UI. Cleanup does not need to update the UI selection; those mutations are removed.
+- **`--exit` flag redundancy**: `NSApp.terminate` was called whenever `isCLIRun` was true, making `--exit` a no-op. The app now exits only when `--exit` is explicitly passed, so `--routes` / `--run-saved-routes` can be used without forcing termination.
+
+### Added
+- **Live calendar refresh**: the calendar list now updates automatically when the system calendar database changes (`EKEventStoreChanged` notification), removing the need to press "Refresh Calendars" after adding or removing a calendar. The observer is unregistered on view disappear and re-registered when the `EKEventStore` is recreated. ([ContentView.swift](BusyMirror/ContentView.swift))
+
+### Changed
+- **`AppLogStore` extracted**: moved from an inline private enum in `ContentView.swift` to its own file `AppLogStore.swift` for easier navigation. ([AppLogStore.swift](BusyMirror/AppLogStore.swift))
+- **`Block.span` factory**: added `Block.span(start:end:)` to replace the repetitive `Block(start:end:srcStableID:nil:label:nil:notes:nil:occurrence:nil)` construction pattern throughout `BlockMath.swift` and `MirrorEngine.swift`. ([BlockMath.swift](BusyMirror/BlockMath.swift))
+- **Removed redundant `MainActor.run` wrappers**: `MirrorEngine` is `@MainActor`; wrapping `store.save` / `store.remove` in `try await MainActor.run { }` was unnecessary and added overhead. ([MirrorEngine.swift](BusyMirror/MirrorEngine.swift))
+- **`SettingsPayload` indentation**: the nested struct was de-dented to column 0 inside `ContentView`, making it look like a top-level type. Indentation is now consistent with the surrounding members.
+
+### Build
+- Bump version to **1.5.1** (build **20**).
+
 ## [1.5.0] - 2026-05-27
 
 ### Removed

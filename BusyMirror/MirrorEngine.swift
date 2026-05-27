@@ -13,6 +13,29 @@ struct MirrorRecord: Hashable, Codable {
     var lastKnownEndTimestamp: TimeInterval
     var updatedAt: Date = Date()
 
+    // updatedAt is intentionally excluded from equality and hashing: it is a
+    // bookkeeping timestamp that changes on every write and should not cause
+    // the mirror index to be marked dirty when the meaningful fields are equal.
+    static func == (lhs: MirrorRecord, rhs: MirrorRecord) -> Bool {
+        lhs.targetCalendarID == rhs.targetCalendarID &&
+        lhs.sourceCalendarID == rhs.sourceCalendarID &&
+        lhs.sourceStableID == rhs.sourceStableID &&
+        lhs.occurrenceTimestamp == rhs.occurrenceTimestamp &&
+        lhs.targetEventIdentifier == rhs.targetEventIdentifier &&
+        lhs.lastKnownStartTimestamp == rhs.lastKnownStartTimestamp &&
+        lhs.lastKnownEndTimestamp == rhs.lastKnownEndTimestamp
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(targetCalendarID)
+        hasher.combine(sourceCalendarID)
+        hasher.combine(sourceStableID)
+        hasher.combine(occurrenceTimestamp)
+        hasher.combine(targetEventIdentifier)
+        hasher.combine(lastKnownStartTimestamp)
+        hasher.combine(lastKnownEndTimestamp)
+    }
+
     var sourceKey: String {
         sourceOccurrenceKey(
             sourceCalID: sourceCalendarID,
@@ -229,7 +252,7 @@ final class MirrorEngine {
                             }
                         }
                     }
-                    occupied.append(Block(start: ts, end: te, srcStableID: nil, label: nil, notes: nil, occurrence: nil))
+                    occupied.append(Block.span(start: ts, end: te))
                 }
             }
             occupied = coalesce(occupied)
@@ -360,12 +383,10 @@ final class MirrorEngine {
                     existing.notes = notes
                     existing.url = desiredURL
                     do {
-                        try await MainActor.run {
-                            try store.save(existing, span: .thisEvent, commit: true)
-                        }
+                        try store.save(existing, span: .thisEvent, commit: true)
                         log("✓ UPDATED [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(blk.start) -> \(blk.end)")
                         rememberMirrorEvent(existing, for: blk)
-                        occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)])
+                        occupied = coalesce(occupied + [Block.span(start: blk.start, end: blk.end)])
                         sessionGuard.insert(gKey)
                         updated += 1
                     } catch {
@@ -414,13 +435,11 @@ final class MirrorEngine {
                 newEv.url = desiredURL
                 newEv.availability = .busy
                 do {
-                    try await MainActor.run {
-                        try store.save(newEv, span: .thisEvent, commit: true)
-                    }
+                    try store.save(newEv, span: .thisEvent, commit: true)
                     created += 1
                     log("✓ CREATED [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)")
                     rememberMirrorEvent(newEv, for: blk)
-                    occupied = coalesce(occupied + [Block(start: blk.start, end: blk.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)])
+                    occupied = coalesce(occupied + [Block.span(start: blk.start, end: blk.end)])
                     sessionGuard.insert(gKey)
                 } catch {
                     log("Save failed: \(error.localizedDescription)")
@@ -479,9 +498,7 @@ final class MirrorEngine {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(candidate.startDate ?? windowStart) -> \(candidate.endDate ?? windowEnd)")
                         } else {
                             do {
-                                try await MainActor.run {
-                                    try store.remove(candidate, span: .thisEvent, commit: true)
-                                }
+                                try store.remove(candidate, span: .thisEvent, commit: true)
                                 removed += 1
                             } catch {
                                 log("Delete failed: \(error.localizedDescription)")
@@ -543,9 +560,7 @@ final class MirrorEngine {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
                         } else {
                             do {
-                                try await MainActor.run {
-                                    try store.remove(ev, span: .thisEvent, commit: true)
-                                }
+                                try store.remove(ev, span: .thisEvent, commit: true)
                                 removed += 1
                             } catch {
                                 log("Delete failed: \(error.localizedDescription)")
@@ -598,12 +613,11 @@ final class MirrorEngine {
                     log("~ WOULD DELETE [\(tgt.title)] \(ev.startDate ?? todayStart) -> \(ev.endDate ?? todayStart)")
                 } else {
                     do {
-                        try await MainActor.run {
-                            try store.remove(ev, span: .thisEvent, commit: true)
-                        }
+                        try store.remove(ev, span: .thisEvent, commit: true)
                         delCount += 1
+                    } catch {
+                        log("Delete failed: \(error.localizedDescription)")
                     }
-                    catch { log("Delete failed: \(error.localizedDescription)") }
                 }
             }
             log("[Cleanup \(tgt.title)] deleted=\(delCount)")

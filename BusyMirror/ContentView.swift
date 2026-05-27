@@ -2,55 +2,6 @@ import SwiftUI
 import EventKit
 import AppKit
 
-private let SKIP_ALL_DAY_DEFAULT = true
-
-private enum AppLogStore {
-    private static let queue = DispatchQueue(label: "BusyMirror.log.store")
-    private static let maxLogSizeBytes: UInt64 = 1_000_000
-
-    static let logDirectoryURL: URL = {
-        let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
-        return base.appendingPathComponent("Logs/BusyMirror", isDirectory: true)
-    }()
-
-    static let logFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.log", isDirectory: false)
-    private static let archivedLogFileURL = logDirectoryURL.appendingPathComponent("BusyMirror.previous.log", isDirectory: false)
-    static let launchdStdoutURL = logDirectoryURL.appendingPathComponent("launchd.stdout.log", isDirectory: false)
-    static let launchdStderrURL = logDirectoryURL.appendingPathComponent("launchd.stderr.log", isDirectory: false)
-
-    private static let timestampFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
-    static func append(_ message: String) {
-        let line = "[\(timestampFormatter.string(from: Date()))] \(message)\n"
-        queue.async {
-            let fm = FileManager.default
-            do {
-                try fm.createDirectory(at: logDirectoryURL, withIntermediateDirectories: true)
-                if let attrs = try? fm.attributesOfItem(atPath: logFileURL.path),
-                   let size = attrs[.size] as? NSNumber,
-                   size.uint64Value >= maxLogSizeBytes {
-                    try? fm.removeItem(at: archivedLogFileURL)
-                    try? fm.moveItem(at: logFileURL, to: archivedLogFileURL)
-                }
-                if !fm.fileExists(atPath: logFileURL.path) {
-                    fm.createFile(atPath: logFileURL.path, contents: nil)
-                }
-                guard let data = line.data(using: .utf8),
-                      let handle = FileHandle(forWritingAtPath: logFileURL.path) else { return }
-                defer { handle.closeFile() }
-                handle.seekToEndOfFile()
-                handle.write(data)
-            } catch {
-                // Logging must never break the app's main behavior.
-            }
-        }
-    }
-}
 
 enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     case allow, skipCovered, fillGaps
@@ -162,6 +113,8 @@ struct ContentView: View {
     @State private var confirmCleanup = false
     @State private var mirrorTask: Task<Void, Never>? = nil
     @State private var progressText: String? = nil
+    /// Token for the EKEventStoreChanged observer; nil until calendar access is granted.
+    @State private var storeObserver: NSObjectProtocol? = nil
     // Run-session guard: prevents the same source event from being mirrored
     // into the same target more than once across multiple routes within a
     // single "Mirror Now" click.
@@ -1345,6 +1298,7 @@ struct ContentView: View {
         }
         .onDisappear {
             appController.setMainWindowVisible(false)
+            unregisterStoreObserver()
         }
         // Persist key settings whenever they change, to ensure restore between runs
         .onChange(of: appController.syncRequestToken) { _ in
@@ -1497,7 +1451,10 @@ struct ContentView: View {
                     }
                 }
             }
-            if CommandLine.arguments.contains("--exit") || isCLIRun {
+            // Exit only when --exit is explicitly passed.  isCLIRun alone does
+            // not force termination so that advanced users can open the UI with
+            // --routes to pre-populate a run without auto-quitting.
+            if CommandLine.arguments.contains("--exit") {
                 NSApp.terminate(nil)
             }
         }
@@ -1542,6 +1499,9 @@ struct ContentView: View {
     func reloadCalendars(forceResetStore: Bool = false) {
         if forceResetStore {
             // EventKit can cache stale/inactive calendars; recreate store for a hard refresh.
+            // Unregister the existing EKEventStoreChanged observer first — it targets the
+            // old store object and would never fire again after the store is replaced.
+            unregisterStoreObserver()
             store = EKEventStore()
         }
         let fetched = store.calendars(for: .event)
@@ -1556,35 +1516,57 @@ struct ContentView: View {
             saveSettingsToDefaults()
         }
         log("Loaded \(calendars.count) calendars.")
+        // Register for live calendar-store changes the first time we have access,
+        // so the calendar list stays up-to-date without pressing "Refresh".
+        if storeObserver == nil {
+            storeObserver = NotificationCenter.default.addObserver(
+                forName: .EKEventStoreChanged,
+                object: store,
+                queue: .main
+            ) { [self] _ in
+                // Skip silent background refreshes while a sync is running to
+                // avoid interfering with an in-progress mirror operation.
+                guard !isRunning else { return }
+                reloadCalendars()
+            }
+        }
         handlePendingMenuBarSyncIfNeeded()
     }
+
+    @MainActor
+    private func unregisterStoreObserver() {
+        if let token = storeObserver {
+            NotificationCenter.default.removeObserver(token)
+            storeObserver = nil
+        }
+    }
     
-// MARK: - Export / Import Settings
-private struct SettingsPayload: Codable {
-    var daysBack: Int
-    var daysForward: Int
-    var mergeGapHours: Int
-    var hideDetails: Bool
-    var copyDescription: Bool
-    var mirrorAllDay: Bool
-    var filterByWorkHours: Bool = false
-    var workHoursStart: Int = 9
-    var workHoursEnd: Int = 17
-    var excludedTitleFilters: [String] = []
-    var excludedOrganizerFilters: [String] = []
-    var mirrorAcceptedOnly: Bool = false
-    var overlapMode: String
-    var titlePrefix: String
-    var placeholderTitle: String
-    var autoDeleteMissing: Bool
-    var routes: [Route]
-    // UI selections (optional for backward compatibility)
-    var selectedSourceID: String? = nil
-    var selectedTargetIDs: [String]? = nil
-    // optional metadata
-    var appVersion: String?
-    var exportedAt: Date = Date()
-}
+    // MARK: - Export / Import Settings
+    private struct SettingsPayload: Codable {
+        var daysBack: Int
+        var daysForward: Int
+        var mergeGapHours: Int
+        var hideDetails: Bool
+        var copyDescription: Bool
+        var mirrorAllDay: Bool
+        var filterByWorkHours: Bool = false
+        var workHoursStart: Int = 9
+        var workHoursEnd: Int = 17
+        var excludedTitleFilters: [String] = []
+        var excludedOrganizerFilters: [String] = []
+        var mirrorAcceptedOnly: Bool = false
+        var overlapMode: String
+        var titlePrefix: String
+        var placeholderTitle: String
+        var autoDeleteMissing: Bool
+        var routes: [Route]
+        // UI selections (optional for backward compatibility)
+        var selectedSourceID: String? = nil
+        var selectedTargetIDs: [String]? = nil
+        // optional metadata
+        var appVersion: String?
+        var exportedAt: Date = Date()
+    }
 
     private func makeSnapshot() -> SettingsPayload {
         SettingsPayload(
@@ -1697,11 +1679,9 @@ private struct SettingsPayload: Codable {
         let srcCal = calendars[sIdx]
         let targetSet = route.targetIDs.subtracting([srcCal.calendarIdentifier])
         let targets = calendars.filter { targetSet.contains($0.calendarIdentifier) }
-        await MainActor.run {
-            sourceIndex = sIdx
-            sourceID = route.sourceID
-            targetIDs = route.targetIDs
-        }
+        // Do NOT mutate sourceIndex / sourceID / targetIDs here: cleanup does
+        // not need to reflect route selections in the UI and doing so causes
+        // jarring picker jumps when iterating over multiple routes.
         await makeEngine().runCleanup(store: store, daysBack: daysBack, daysForward: daysForward, sourceCalendar: srcCal, targetCalendars: targets, titlePrefix: titlePrefix, placeholderTitle: placeholderTitle, writeEnabled: writeEnabled)
     }
 

@@ -57,10 +57,12 @@ func mirrorTimeKey(start: Date, end: Date) -> String {
 func buildMirrorURL(targetCalID: String, sourceCalID: String, sourceStableID: String?, occurrence: Date?, start: Date, end: Date) -> URL? {
     let sourceID = sourceStableID ?? ""
     let occ = occurrence.map { String($0.timeIntervalSince1970) } ?? "-"
+    // Percent-encode IDs so that any embedded ";" doesn't corrupt the
+    // semicolon-delimited path when the URL is later parsed.
     let parts = [
-        targetCalID,
-        sourceCalID,
-        sourceID,
+        mirrorURLComponentEncode(targetCalID),
+        mirrorURLComponentEncode(sourceCalID),
+        mirrorURLComponentEncode(sourceID),
         occ,
         String(start.timeIntervalSince1970),
         String(end.timeIntervalSince1970)
@@ -68,7 +70,9 @@ func buildMirrorURL(targetCalID: String, sourceCalID: String, sourceStableID: St
     var components = URLComponents()
     components.scheme = "mirror"
     components.host = "x"
-    components.path = "/" + parts.joined(separator: ";")
+    // Use percentEncodedPath so URLComponents does not re-encode the already
+    // percent-encoded IDs (double-encoding would break round-trip parsing).
+    components.percentEncodedPath = "/" + parts.joined(separator: ";")
     return components.url
 }
 

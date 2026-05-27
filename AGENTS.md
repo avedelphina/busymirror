@@ -40,16 +40,17 @@ BusyMirror/
 ├── MirrorEngine.swift           # EventKit mirror engine (read, deduplicate, merge, create/update/delete)
 ├── MirrorConfig.swift           # Configuration struct passed to the engine
 ├── MirrorUtils.swift            # URL builders, mirror detection, calendar labels
-├── BlockMath.swift              # Block merging, gap calculation, overlap logic
+├── BlockMath.swift              # Block merging, gap calculation, overlap logic (Block.span factory)
 ├── EventFilters.swift           # Work-hours, title, and organizer filters
 ├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator) + menu bar view
+├── AppLogStore.swift            # File-backed log store with rotation (AppLogStore enum)
 ├── Info.plist                   # LSUIElement, calendar usage descriptions
 ├── BusyMirror.entitlements      # App sandbox + calendar access entitlement
 └── Assets.xcassets/             # AppIcon set and accent color
 
-BusyMirror.xcodeproj/            # Xcode project
-BusyMirrorTests/                 # Empty (no tests implemented)
-BusyMirrorUITests/               # Empty (no tests implemented)
+BusyMirror.xcodeproj/            # Xcode project (PBXFileSystemSynchronizedRootGroup — new .swift files are auto-included)
+BusyMirrorTests/                 # Unit tests: BlockMathTests, EventFiltersTests, MirrorUtilsTests (45 tests)
+BusyMirrorUITests/               # UI tests (empty)
 ```
 
 **Architecture note:** `ContentView.swift` handles the SwiftUI view hierarchy, settings serialization, CLI argument parsing, `launchd` scheduling, and logging. The EventKit mirror engine lives in `MirrorEngine.swift` and is invoked from `ContentView` via `makeEngine()`. Pure helper logic (block math, filters, URL utilities) has been extracted into standalone files for testability.
@@ -142,6 +143,7 @@ Scheduled runs are implemented by generating a `launchd` plist in `~/Library/Lau
 | `BusyMirror/EventFilters.swift` | Work-hours, title, and organizer filters |
 | `BusyMirror/BusyMirrorApp.swift` | App struct, window scene, menu-bar extra |
 | `BusyMirror/MenuBarSupport.swift` | `@MainActor` app controller + menu bar SwiftUI view |
+| `BusyMirror/AppLogStore.swift` | File-backed log with rotation (`~/Library/Logs/BusyMirror/`) |
 | `BusyMirror/Info.plist` | `LSUIElement`, calendar usage descriptions |
 | `BusyMirror/BusyMirror.entitlements` | Sandbox + calendar entitlement |
 | `Makefile` | Reproducible build, sign, and package targets |
