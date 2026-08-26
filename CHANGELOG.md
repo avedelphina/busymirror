@@ -2,6 +2,12 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.7.0] - 2026-08-26
+
+### Added
+- **Event-driven background sync**, replacing the hourly `launchd StartInterval` poll (which only fired if the Mac happened to be awake at that instant, and got throttled/coalesced by macOS). Once saved routes exist, the app registers as a login item (`SMAppService.mainApp`), removes any previously-installed `launchd` schedule, and reacts to `EKEventStoreChanged` (debounced ~3s), `NSWorkspace.didWakeNotification` (resync after sleep), and a 30-minute fallback timer as a safety net for a missed notification. Auto-sync always writes (`writeEnabled: true`) regardless of the interactive dry-run toggle, matching what the old scheduled `--write 1` runs did.
+- This logic lives in `BusyMirrorAppController`, not `ContentView` — the controller is owned by the `App` struct for the whole process lifetime, whereas `ContentView`'s own `EKEventStoreChanged` observer is torn down in `.onDisappear` when the main window closes (confirmed: `MenuBarSupport.swift`'s "Sync Now" already reopens the window before syncing, which only makes sense if the window's state is discarded on close). Auto-sync needs to work with the window closed, so it can't live there. ([MenuBarSupport.swift](BusyMirror/MenuBarSupport.swift))
+
 ## [1.6.1] - 2026-08-26
 
 ### Added

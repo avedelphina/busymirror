@@ -1311,6 +1311,9 @@ struct ContentView: View {
             tryRunCLIIfPresent()
             enforceNoSourceInTargets()
             handlePendingMenuBarSyncIfNeeded()
+            if !isCLIRun {
+                appController.bootstrapBackgroundSync()
+            }
         }
         .onDisappear {
             appController.setMainWindowVisible(false)
@@ -1352,6 +1355,7 @@ struct ContentView: View {
         .onChange(of: routes) { _ in
             saveSettingsToDefaults()
             handlePendingMenuBarSyncIfNeeded()
+            appController.armAutoSyncIfPossible()
         }
     }
     

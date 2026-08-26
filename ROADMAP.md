@@ -12,20 +12,14 @@
 - 1.3.6: in-app scheduling via `launchd` with hourly/daily/weekday modes
 - 1.3.6: generated macOS app icon set and packaged release assets
 - 1.4.0: unit-test suite (45 tests), Cancel button, progress indicator, sandbox LaunchAgent fix, mirror URL fix, engine refactor into `MirrorConfig`
-- Calendar list already auto-refreshes on `EKEventStoreChanged` (does not yet trigger an auto-sync — see Next)
 - CLI diagnostics: `--help`, `--list-calendars [--json]`, `--status [--json]`, real exit codes (2 = no access, 3 = no saved routes), last-run tracking (time/ok/summary)
+- 1.7.0: **Event-driven background sync**, replacing the hourly `launchd StartInterval` poll. Auto-sync logic lives in `BusyMirrorAppController` (an app-lifetime object, not tied to `ContentView`'s window lifecycle — closing the main window used to tear down the `EKEventStoreChanged` observer along with it, which would have made auto-sync a no-op whenever the window was closed). Once saved routes exist: registers as a login item (`SMAppService.mainApp`), removes any old `launchd` schedule, watches `EKEventStoreChanged` (debounced ~3s) and `NSWorkspace.didWakeNotification`, plus a 30-min fallback timer as a safety net. Auto-sync always writes (`writeEnabled: true`), independent of the interactive dry-run toggle.
 
-## Next — reliability (V2 groundwork)
-1. **Event-driven background sync.** The existing hourly `launchd StartInterval` only fires while the Mac happens to be awake at that instant and gets throttled/coalesced by macOS, so it's not reliable. Replace polling with reacting:
-   - Keep the app running as a login item via `SMAppService.agent` instead of relying on launchd to relaunch it.
-   - Extend the existing `EKEventStoreChanged` observer (today it only reloads the calendar list) to also trigger a debounced (~2-5s) auto-sync of saved routes.
-   - Add an `NSWorkspace.didWakeNotification` handler to resync after sleep.
-   - Keep one coarse fallback timer (e.g. every 30 min) purely as a safety net for a missed notification — not the primary mechanism.
-   - `launchd`'s remaining job shrinks to "make sure the app is running," which `SMAppService` likely covers, so the plist-generation code may become unnecessary.
-2. **MCP server (thin external wrapper, not embedded in the app).** So agents driving BusyMirror don't have to shell out to the CLI and regex-parse log lines. A small standalone stdio-transport script (Node/Python) maps MCP tools 1:1 onto the CLI's `--json` output: `list_calendars`, `list_routes`, `run_route`, `run_saved_routes`, `get_status`. Deliberately kept out of the Swift app itself — no MCP SDK dependency in the signed binary (AGENTS.md's zero-external-packages rule stays intact), and MCP hosts spawn server processes on demand anyway, so there's no need for the app to run one persistently.
+## Next
+1. **MCP server (thin external wrapper, not embedded in the app).** So agents driving BusyMirror don't have to shell out to the CLI and regex-parse log lines. A small standalone stdio-transport script (Node/Python) maps MCP tools 1:1 onto the CLI's `--json` output: `list_calendars`, `list_routes`, `run_route`, `run_saved_routes`, `get_status`. Deliberately kept out of the Swift app itself — no MCP SDK dependency in the signed binary (AGENTS.md's zero-external-packages rule stays intact), and MCP hosts spawn server processes on demand anyway, so there's no need for the app to run one persistently.
 
 ## Then — V2 UI polish
-- Split `ContentView.swift` (~1800 lines doing UI + settings + CLI + scheduling) into per-section view models (Routes, Schedule, Privacy, Log) so views are small and native-feeling.
+- Finish the `ContentView.swift` split into per-section view models (Routes, Schedule, Privacy, Log) — 1.7.0 already pulled the calendar-access/auto-sync state out into `BusyMirrorAppController`; the rest (UI/settings/CLI) is still one ~1900-line file.
 - Real `Settings { }` scene instead of the main window doubling as preferences.
 - Menu bar icon reflects state (idle / syncing / error) instead of a static icon.
 - Surface last-sync-time / last-error / next-check in the menu bar UI — the data now exists (`--status`'s `lastRunAtISO`/`lastRunOK`/`lastRunSummary`), this is just wiring it into the menu.
