@@ -61,6 +61,7 @@ struct Route: Identifiable, Hashable, Codable {
 
 struct ContentView: View {
     @EnvironmentObject private var appController: BusyMirrorAppController
+    @Environment(\.openWindow) private var openWindow
     @State private var store = EKEventStore()
     @State private var hasAccess = false
     @State private var calendars: [EKCalendar] = []
@@ -615,8 +616,8 @@ struct ContentView: View {
                 Text("Mirroring defaults, filters, and work hours moved to Preferences.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                SettingsLink {
-                    Text("Open Preferences…")
+                Button("Open Preferences…") {
+                    appController.openPreferencesWindow(using: openWindow)
                 }
                 Spacer(minLength: 0)
             }

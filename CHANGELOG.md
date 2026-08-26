@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.8.1] - 2026-08-26
+
+### Fixed
+- **Preferences window unreachable**: 1.8.0's Settings scene (⌘,) and its `SettingsLink` button didn't work because BusyMirror is an `LSUIElement` (accessory) app — those don't get the standard app menu, so there's no menu for the automatic "Settings…" command or Cmd+, to live in. Replaced the `Settings { }` scene with a plain `Window(id: "preferences-window")`, opened via `openWindow(id:)` — the same mechanism that already reliably opens the main window from the menu bar. Also added a "Preferences…" item to the menu bar dropdown itself, so there are two direct routes in instead of one that depended on OS menu plumbing this app type doesn't get. ([BusyMirrorApp.swift](BusyMirror/BusyMirrorApp.swift), [MenuBarSupport.swift](BusyMirror/MenuBarSupport.swift), [ContentView.swift](BusyMirror/ContentView.swift))
+
 ## [1.8.0] - 2026-08-26
 
 ### Added
