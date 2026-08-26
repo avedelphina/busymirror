@@ -21,22 +21,6 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
     }
 }
 
-// Calendar color helpers
-private func calColor(_ cal: EKCalendar) -> Color {
-    #if os(macOS)
-    return Color(cal.cgColor ?? NSColor.systemGray.cgColor)
-    #else
-    return Color(cgColor: cal.cgColor ?? UIColor.systemGray.cgColor)
-    #endif
-}
-
-@ViewBuilder
-private func calChip(_ cal: EKCalendar) -> some View {
-    HStack(spacing: 6) {
-        Circle().fill(calColor(cal)).frame(width: 10, height: 10)
-        Text(calLabel(cal))
-    }
-}
 
 struct Route: Identifiable, Hashable, Codable {
     let id = UUID()
@@ -464,246 +448,17 @@ struct ContentView: View {
         )
     }
 
-    @ViewBuilder
-    private func calendarsSection() -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Source calendar")
-                .font(.subheadline.weight(.semibold))
-            Picker("Source", selection: $sourceIndex) {
-                ForEach(Array(calendars.indices), id: \.self) { i in
-                    Text("\(i + 1): \(calLabel(calendars[i]))").tag(i)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .disabled(isRunning || calendars.isEmpty)
-
-            Divider()
-
-            HStack {
-                Text("Target calendars")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(targetIDs.count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(calendars.indices), id: \.self) { i in
-                        let isSource = (i == sourceIndex)
-                        let binding = Binding<Bool>(
-                            get: { !isSource && targetSelections.contains(i) },
-                            set: { newValue in
-                                // Never allow selecting the source as a target
-                                if isSource { return }
-                                if newValue {
-                                    targetSelections.insert(i)
-                                    targetIDs.insert(calendars[i].calendarIdentifier)
-                                } else {
-                                    targetSelections.remove(i)
-                                    targetIDs.remove(calendars[i].calendarIdentifier)
-                                }
-                            }
-                        )
-                        Toggle(isOn: binding) {
-                            HStack(spacing: 8) {
-                                Text("\(i + 1).")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                calChip(calendars[i])
-                            }
-                            .padding(.vertical, 3)
-                        }
-                        .toggleStyle(.switch)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(nsColor: .controlBackgroundColor))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
-                        )
-                        .disabled(isRunning || isSource)
-                        .opacity(isSource ? 0.5 : 1)
-                    }
-                }
-            }
-            .frame(minHeight: 170, maxHeight: 260)
-        }
-    }
-
-    @ViewBuilder
-    private func routesSection() -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Routes (multi-source)")
-                    .font(.headline)
-                Spacer()
-                Button("Add from current selection") {
-                    guard let sid = sourceID, !targetIDs.isEmpty else { return }
-                    let r = Route(sourceID: sid,
-                                  targetIDs: targetIDs,
-                                  privacy: hideDetails,
-                                  copyNotes: copyDescription,
-                                  syncReminders: syncReminders,
-                                  mergeGapHours: mergeGapHours,
-                                  overlap: overlapMode,
-                                  allDay: mirrorAllDay)
-                    routes.append(r)
-                }
-                .disabled(isRunning || calendars.isEmpty || targetIDs.isEmpty)
-                .buttonStyle(.borderedProminent)
-                Button("Clear") { routes.removeAll() }
-                    .disabled(isRunning || routes.isEmpty)
-                    .buttonStyle(.bordered)
-            }
-            if routes.isEmpty {
-                Text("No routes yet. Pick a Source and Targets above, then click ‘Add from current selection’.")
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                LazyVStack(spacing: 10) {
-                    ForEach($routes, id: \.id) { routeBinding in
-                        routeCard(for: routeBinding)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func routeCard(for routeBinding: Binding<Route>) -> some View {
-        let route = routeBinding.wrappedValue
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 8) {
-                    sourceSummaryView(for: route)
-                    targetSummaryView(for: route)
-                }
-                Spacer(minLength: 12)
-                Button(role: .destructive) { removeRoute(id: route.id) } label: { Text("Remove") }
-            }
-
-            Divider()
-
-            Toggle("Private", isOn: routeBinding.privacy)
-                .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
-            Toggle("Copy description", isOn: routeBinding.copyNotes)
-                .disabled(isRunning || route.privacy)
-                .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
-            Toggle("Sync reminders", isOn: routeBinding.syncReminders)
-                .disabled(isRunning)
-                .help("If ON, copy the source event’s reminders/alarms into the placeholder.")
-            Toggle("Mirror all-day events for this route", isOn: routeBinding.allDay)
-                .disabled(isRunning)
-                .help("Mirror all-day events for this source.")
-
-            HStack(spacing: 16) {
-                mergeGapField(for: routeBinding)
-                overlapPicker(for: routeBinding)
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.25), lineWidth: 1.1)
-        )
-    }
-
-    @ViewBuilder
-    private func sourceSummaryView(for route: Route) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Source")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let sCal = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
-                HStack(spacing: 6) {
-                    Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
-                    Text(calLabel(sCal))
-                        .fontWeight(.semibold)
-                }
-            } else {
-                Text(labelForCalendar(id: route.sourceID))
-                    .fontWeight(.semibold)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func targetSummaryView(for route: Route) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Targets")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(route.targetIDs.sorted(by: <), id: \.self) { tid in
-                        if let tCal = calendars.first(where: { $0.calendarIdentifier == tid }) {
-                            HStack(spacing: 6) {
-                                Circle().fill(calColor(tCal)).frame(width: 9, height: 9)
-                                Text(calLabel(tCal))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 999, style: .continuous)
-                                    .fill(Color.primary.opacity(0.1))
-                            )
-                        } else {
-                            Text(labelForCalendar(id: tid))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 999, style: .continuous)
-                                        .fill(Color.primary.opacity(0.1))
-                                )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func mergeGapField(for routeBinding: Binding<Route>) -> some View {
-        HStack(spacing: 8) {
-            Text("Merge gap")
-            TextField("0", value: routeBinding.mergeGapHours, formatter: Self.intFormatter)
-                .frame(width: 56)
-                .disabled(isRunning)
-                .help("Merge adjacent source events separated by ≤ this many hours (e.g., flight legs). 0 = no merge.")
-            Text("h").foregroundStyle(.secondary)
-        }
-        .font(.subheadline)
-    }
-
-    @ViewBuilder
-    private func overlapPicker(for routeBinding: Binding<Route>) -> some View {
-        HStack(spacing: 8) {
-            Text("Overlap")
-            Picker("Overlap", selection: routeBinding.overlap) {
-                ForEach(OverlapMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .frame(width: 170)
-            .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
-        }
-        .font(.subheadline)
-    }
-
-    private func removeRoute(id: UUID) {
-        routes.removeAll { $0.id == id }
+    private func addRouteFromCurrentSelection() {
+        guard let sid = sourceID, !targetIDs.isEmpty else { return }
+        let r = Route(sourceID: sid,
+                      targetIDs: targetIDs,
+                      privacy: hideDetails,
+                      copyNotes: copyDescription,
+                      syncReminders: syncReminders,
+                      mergeGapHours: mergeGapHours,
+                      overlap: overlapMode,
+                      allDay: mirrorAllDay)
+        routes.append(r)
     }
 
     private func runConfiguredRoutes(_ configuredRoutes: [Route], sessionGuard: inout Set<String>) async {
@@ -856,187 +611,19 @@ struct ContentView: View {
     @ViewBuilder
     private func optionsSection() -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    HStack(spacing: 8) {
-                        Text("Days back")
-                        TextField("1", value: $daysBack, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Days forward")
-                        TextField("7", value: $daysForward, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Default merge gap")
-                        TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                        Text("h").foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text("Days back")
-                        TextField("1", value: $daysBack, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Days forward")
-                        TextField("7", value: $daysForward, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Default merge gap")
-                        TextField("0", value: $mergeGapHours, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 64)
-                            .disabled(isRunning)
-                        Text("h").foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .onChange(of: daysBack) { v in daysBack = max(0, v) }
-            .onChange(of: daysForward) { v in daysForward = max(0, v) }
-            .onChange(of: mergeGapHours) { _ in saveSettingsToDefaults() }
-
-            Divider()
-
-            Toggle("Hide details (use \"Busy\" title)", isOn: $hideDetails)
-                .disabled(isRunning)
-            Toggle("Copy description when mirroring", isOn: $copyDescription)
-                .disabled(isRunning || hideDetails)
-            Toggle("Sync reminders when mirroring", isOn: $syncReminders)
-                .disabled(isRunning)
-            Toggle("Mirror all-day events", isOn: $mirrorAllDay)
-                .disabled(isRunning)
-            Toggle("Mirror accepted events only", isOn: $mirrorAcceptedOnly)
-                .disabled(isRunning)
-
-            Picker("Overlap mode", selection: $overlapModeRaw) {
-                ForEach(OverlapMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(isRunning)
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    Text("Title prefix")
-                    TextField("🪞 ", text: $titlePrefix)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .disabled(isRunning)
-                    Text("Placeholder title")
-                    TextField("Busy", text: $placeholderTitle)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 170)
-                        .disabled(isRunning)
-                    Text("(prefix may be blank)").foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text("Title prefix")
-                        TextField("🪞 ", text: $titlePrefix)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
-                            .disabled(isRunning)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Placeholder title")
-                        TextField("Busy", text: $placeholderTitle)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 170)
-                            .disabled(isRunning)
-                    }
-                }
-            }
-
-            Toggle("Limit mirroring to work hours", isOn: $filterByWorkHours)
-                .disabled(isRunning)
-                .onChange(of: filterByWorkHours) { _ in saveSettingsToDefaults() }
-
-            if filterByWorkHours {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("Start hour")
-                        TextField("9", value: $workHoursStart, formatter: Self.hourFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 56)
-                            .disabled(isRunning)
-                        Text("End hour")
-                        TextField("17", value: $workHoursEnd, formatter: Self.hourFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 56)
-                            .disabled(isRunning)
-                        Text("(local time)").foregroundStyle(.secondary)
-                    }
-                    Text("Events starting outside this range are skipped; end hour is exclusive.")
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
-                }
-                .onChange(of: workHoursStart) { _ in
-                    clampWorkHours()
-                    saveSettingsToDefaults()
-                }
-                .onChange(of: workHoursEnd) { _ in
-                    clampWorkHours()
-                    saveSettingsToDefaults()
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Skip source titles (one per line)")
-                    .font(.subheadline.weight(.semibold))
-                TextEditor(text: $excludedTitleFiltersRaw)
-                    .font(.body)
-                    .frame(minHeight: 82)
-                    .disabled(isRunning)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.22))
-                    )
-                Text("Matches are case-insensitive and apply before mirroring.")
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text("Mirroring defaults, filters, and work hours moved to Preferences.")
                     .font(.footnote)
-            }
-            .onChange(of: excludedTitleFiltersRaw) { _ in saveSettingsToDefaults() }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Skip organizers (name or email, one per line)")
-                    .font(.subheadline.weight(.semibold))
-                TextEditor(text: $excludedOrganizerFiltersRaw)
-                    .font(.body)
-                    .frame(minHeight: 82)
-                    .disabled(isRunning)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.22))
-                    )
-                Text("Checks organizer name, email, or URL. Case-insensitive.")
                     .foregroundStyle(.secondary)
-                    .font(.footnote)
+                SettingsLink {
+                    Text("Open Preferences…")
+                }
+                Spacer(minLength: 0)
             }
-            .onChange(of: excludedOrganizerFiltersRaw) { _ in saveSettingsToDefaults() }
 
             Divider()
 
             Toggle("Write to calendars (disable for Dry-Run)", isOn: $writeEnabled)
-                .disabled(isRunning)
-            Toggle("Auto-delete mirrors if source is removed", isOn: $autoDeleteMissing)
                 .disabled(isRunning)
 
             HStack(spacing: 10) {
@@ -1050,71 +637,26 @@ struct ContentView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Scheduled runs")
-                    .font(.subheadline.weight(.semibold))
-                HStack(spacing: 8) {
-                    Picker("Mode", selection: Binding(
-                        get: { scheduleMode },
-                        set: { newValue in
-                            scheduleMode = newValue
-                            scheduleWeekdaysOnly = (newValue == .weekdays)
-                        }
-                    )) {
-                        ForEach(ScheduleMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
+            ScheduleSectionView(
+                scheduleMode: Binding(
+                    get: { scheduleMode },
+                    set: { newValue in
+                        scheduleMode = newValue
+                        scheduleWeekdaysOnly = (newValue == .weekdays)
                     }
-                    .pickerStyle(.segmented)
-                    .disabled(isRunning)
-                    Spacer(minLength: 0)
-                }
-                if scheduleMode == .hourly {
-                    HStack(spacing: 8) {
-                        Text("Every")
-                        TextField("1", value: $scheduleIntervalHours, formatter: Self.smallIntFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 56)
-                            .disabled(isRunning)
-                        Text(scheduleIntervalHours == 1 ? "hour" : "hours")
-                        Spacer(minLength: 0)
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        Text("Time")
-                        TextField("8", value: $scheduleHour, formatter: Self.hourFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 56)
-                            .disabled(isRunning)
-                        Text(":")
-                        TextField("0", value: $scheduleMinute, formatter: Self.intFormatter)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 56)
-                            .disabled(isRunning)
-                        Spacer(minLength: 0)
-                    }
-                }
-                Text("Creates a LaunchAgent that runs the installed app with saved routes in write mode.")
-                    .foregroundStyle(.secondary)
-                    .font(.footnote)
-                Text(hasInstalledSchedule ? "Installed: \(scheduleSummary)" : "Not installed")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 10) {
-                    Button("Install Schedule") { installSchedule() }
-                        .disabled(isRunning || routes.isEmpty)
-                    Button("Remove Schedule") { removeSchedule() }
-                        .disabled(isRunning || !hasInstalledSchedule)
-                    Button("Reveal LaunchAgent") {
-                        NSWorkspace.shared.activateFileViewerSelecting([launchAgentURL])
-                    }
-                    .disabled(!hasInstalledSchedule)
-                    Spacer(minLength: 0)
-                }
-            }
-            .onChange(of: scheduleHour) { _ in clampScheduleTime() }
-            .onChange(of: scheduleMinute) { _ in clampScheduleTime() }
-            .onChange(of: scheduleIntervalHours) { _ in clampScheduleTime() }
+                ),
+                scheduleIntervalHours: $scheduleIntervalHours,
+                scheduleHour: $scheduleHour,
+                scheduleMinute: $scheduleMinute,
+                isRunning: isRunning,
+                routesEmpty: routes.isEmpty,
+                hasInstalledSchedule: hasInstalledSchedule,
+                scheduleSummary: scheduleSummary,
+                onInstall: installSchedule,
+                onRemove: removeSchedule,
+                onRevealLaunchAgent: { NSWorkspace.shared.activateFileViewerSelecting([launchAgentURL]) },
+                onScheduleTimeChanged: clampScheduleTime
+            )
 
             HStack(spacing: 10) {
                 Button("Cleanup Placeholders") {
@@ -1148,17 +690,6 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func logSection() -> some View {
-        TextEditor(text: Binding(get: { logText }, set: { _ in }))
-            .font(.system(.body, design: .monospaced))
-            .frame(minHeight: 180)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.22))
-            )
-    }
-    
     var body: some View {
         GeometryReader { proxy in
             let compactLayout = proxy.size.width < 1220
@@ -1239,24 +770,44 @@ struct ContentView: View {
                             }
                         } else if compactLayout {
                             panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
-                                calendarsSection()
+                                CalendarsSectionView(
+                                    calendars: calendars,
+                                    sourceIndex: $sourceIndex,
+                                    targetSelections: $targetSelections,
+                                    targetIDs: $targetIDs,
+                                    isRunning: isRunning
+                                )
                             }
-                            panelCard(title: "General Settings", subtitle: "Mirroring rules, filters, and actions", symbol: "slider.horizontal.3") {
+                            panelCard(title: "Actions & Schedule", subtitle: "Export, cleanup, and manual scheduling", symbol: "slider.horizontal.3") {
                                 optionsSection()
                             }
                             panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
-                                routesSection()
+                                RoutesSectionView(
+                                    routes: $routes,
+                                    calendars: calendars,
+                                    isRunning: isRunning,
+                                    titlePrefix: titlePrefix,
+                                    placeholderTitle: placeholderTitle,
+                                    canAddRoute: sourceID != nil && !targetIDs.isEmpty,
+                                    onAddRoute: addRouteFromCurrentSelection
+                                )
                             }
                             panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
-                                logSection()
+                                LogSectionView(logText: logText)
                             }
                         } else {
                             HStack(alignment: .top, spacing: 14) {
                                 VStack(spacing: 12) {
                                     panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
-                                        calendarsSection()
+                                        CalendarsSectionView(
+                                    calendars: calendars,
+                                    sourceIndex: $sourceIndex,
+                                    targetSelections: $targetSelections,
+                                    targetIDs: $targetIDs,
+                                    isRunning: isRunning
+                                )
                                     }
-                                    panelCard(title: "General Settings", subtitle: "Mirroring rules, filters, and actions", symbol: "slider.horizontal.3") {
+                                    panelCard(title: "Actions & Schedule", subtitle: "Export, cleanup, and manual scheduling", symbol: "slider.horizontal.3") {
                                         optionsSection()
                                     }
                                 }
@@ -1265,10 +816,18 @@ struct ContentView: View {
 
                                 VStack(spacing: 12) {
                                     panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
-                                        routesSection()
+                                        RoutesSectionView(
+                                    routes: $routes,
+                                    calendars: calendars,
+                                    isRunning: isRunning,
+                                    titlePrefix: titlePrefix,
+                                    placeholderTitle: placeholderTitle,
+                                    canAddRoute: sourceID != nil && !targetIDs.isEmpty,
+                                    onAddRoute: addRouteFromCurrentSelection
+                                )
                                     }
                                     panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
-                                        logSection()
+                                        LogSectionView(logText: logText)
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
@@ -1864,6 +1423,25 @@ struct ContentView: View {
         rebuildSelectionsFromIDs()
     }
 
+    /// Used only at launch (`loadSettingsFromDefaults`) — restores just the
+    /// state that has no other persistence (`routes` and the manual
+    /// source/target selection are plain `@State`, not `@AppStorage`).
+    /// Deliberately does NOT touch the @AppStorage-backed fields even though
+    /// they're also present in the decoded snapshot: those already restore
+    /// themselves from their own UserDefaults keys before this ever runs, and
+    /// since Preferences is now a separate window, a value changed there
+    /// wouldn't necessarily have re-triggered `saveSettingsToDefaults()` —
+    /// applying the (possibly stale) snapshot copy on top would silently
+    /// revert a preference the user just changed. `applySnapshot` (the full
+    /// version) stays reserved for Import, where overwriting everything from
+    /// the imported file is exactly the point.
+    private func restoreLaunchState(from s: SettingsPayload) {
+        routes = s.routes
+        if let selSrc = s.selectedSourceID { sourceID = selSrc }
+        if let selTgts = s.selectedTargetIDs { targetIDs = Set(selTgts) }
+        rebuildSelectionsFromIDs()
+    }
+
     private func exportSettings() {
         let panel = NSSavePanel()
         panel.allowedFileTypes = ["json"]
@@ -1946,7 +1524,7 @@ struct ContentView: View {
         if let data = defaults.data(forKey: settingsDefaultsKey) {
             do {
                 let snap = try JSONDecoder().decode(SettingsPayload.self, from: data)
-                applySnapshot(snap)
+                restoreLaunchState(from: snap)
                 // A build affected by an earlier settings.v2 decode failure (fixed
                 // in 1.6.0 — a newly added field with no decode fallback threw and
                 // wiped routes in memory, which a later autosave then persisted

@@ -4,6 +4,12 @@ import SwiftUI
 struct BusyMirrorApp: App {
     @StateObject private var appController = BusyMirrorAppController()
 
+    private var menuBarIcon: String {
+        if appController.isSyncing { return "arrow.triangle.2.circlepath.circle.fill" }
+        if appController.lastRunFailed { return "exclamationmark.triangle.fill" }
+        return "calendar.badge.clock"
+    }
+
     var body: some Scene {
         Window("BusyMirror", id: BusyMirrorSceneID.mainWindow) {
             ContentView()
@@ -12,8 +18,13 @@ struct BusyMirrorApp: App {
         }
         .defaultSize(width: 1120, height: 760)
 
-        MenuBarExtra("BusyMirror", systemImage: appController.isSyncing ? "arrow.triangle.2.circlepath.circle.fill" : "calendar.badge.clock") {
+        MenuBarExtra("BusyMirror", systemImage: menuBarIcon) {
             BusyMirrorMenuBarView()
+                .environmentObject(appController)
+        }
+
+        Settings {
+            PreferencesView()
                 .environmentObject(appController)
         }
     }

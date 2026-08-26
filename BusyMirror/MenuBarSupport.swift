@@ -13,6 +13,36 @@ final class BusyMirrorAppController: ObservableObject {
     @Published private(set) var hasPendingSyncRequest = false
     @Published private(set) var syncRequestToken = UUID()
     @Published private(set) var isMainWindowVisible = false
+    @Published private(set) var lastRunFailed = false
+    @Published private(set) var autoSyncArmed = false
+
+    init() {
+        refreshLastRunStatus()
+    }
+
+    /// Re-reads the shared lastRun* UserDefaults keys. Call after any run —
+    /// interactive, CLI, or auto-sync — writes them, so the menu bar icon and
+    /// dropdown reflect the outcome regardless of which path produced it.
+    func refreshLastRunStatus() {
+        guard let atISO = UserDefaults.standard.string(forKey: "lastRunAtISO"), !atISO.isEmpty else {
+            lastRunFailed = false
+            return
+        }
+        lastRunFailed = (UserDefaults.standard.object(forKey: "lastRunOK") as? Bool) == false
+    }
+
+    /// Human-readable "last sync" line for the menu bar dropdown. Computed on
+    /// demand (not published) since the dropdown's content is rebuilt each
+    /// time it's opened.
+    var lastRunStatusText: String {
+        guard let atISO = UserDefaults.standard.string(forKey: "lastRunAtISO"), !atISO.isEmpty,
+              let date = ISO8601DateFormatter().date(from: atISO) else {
+            return "No sync yet."
+        }
+        let relative = RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+        let ok = (UserDefaults.standard.object(forKey: "lastRunOK") as? Bool) != false
+        return ok ? "Last sync: \(relative)" : "Last sync failed: \(relative)"
+    }
 
     func requestSync() {
         hasPendingSyncRequest = true
@@ -51,7 +81,6 @@ final class BusyMirrorAppController: ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private var debounceTask: Task<Void, Never>?
     private var fallbackTask: Task<Void, Never>?
-    private var hasArmedAutoSync = false
 
     private let settingsDefaultsKey = "settings.v2"
     private let legacyRoutesDefaultsKey = "routes.v1"
@@ -83,9 +112,9 @@ final class BusyMirrorAppController: ObservableObject {
     /// (e.g. from ContentView whenever the saved routes list changes) — it
     /// only does anything the first time routes go from empty to non-empty.
     func armAutoSyncIfPossible() {
-        guard !hasArmedAutoSync else { return }
+        guard !autoSyncArmed else { return }
         guard !loadRoutesFromDefaults().isEmpty else { return }
-        hasArmedAutoSync = true
+        autoSyncArmed = true
 
         if SMAppService.mainApp.status != .enabled {
             try? SMAppService.mainApp.register()
@@ -214,6 +243,7 @@ final class BusyMirrorAppController: ObservableObject {
         UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date()), forKey: "lastRunAtISO")
         UserDefaults.standard.set(errorCount == 0, forKey: "lastRunOK")
         UserDefaults.standard.set(summary, forKey: "lastRunSummary")
+        refreshLastRunStatus()
         setSyncing(false)
     }
 }
@@ -227,8 +257,12 @@ struct BusyMirrorMenuBarView: View {
             Text("BusyMirror")
                 .font(.headline)
 
-            Text(appController.isSyncing ? "Sync in progress." : "Use your saved routes or current selection.")
+            Text(appController.isSyncing ? "Sync in progress." : appController.lastRunStatusText)
                 .font(.subheadline)
+                .foregroundStyle(appController.lastRunFailed ? .red : .secondary)
+
+            Text(appController.autoSyncArmed ? "Auto-sync: watching for calendar changes." : "Auto-sync: not active (add a saved route to enable).")
+                .font(.caption)
                 .foregroundStyle(.secondary)
 
             Divider()

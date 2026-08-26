@@ -2,6 +2,17 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.8.0] - 2026-08-26
+
+### Added
+- **Real Settings (⌘,) window**: `PreferencesView` now hosts the pure-defaults controls (time window, privacy/mirroring defaults, title prefix/placeholder, work hours, skip filters) that used to live in the main window's "General Settings" panel. They're `@AppStorage`-backed so both windows always see the same live values. Main window keeps everything with session/live state: routes, calendar picker, dry-run toggle, Export/Import, manual scheduling, cleanup.
+- **Menu bar icon reflects state**: idle (`calendar.badge.clock`), syncing (`arrow.triangle.2.circlepath.circle.fill`), or last run failed (`exclamationmark.triangle.fill`).
+- **Menu bar dropdown diagnostics**: last-sync time and result, and whether auto-sync is currently armed — sourced from the same `lastRunAtISO`/`lastRunOK`/`lastRunSummary` keys `--status` reads, so CLI/interactive/auto-sync runs all feed the same indicator.
+- **`ContentView.swift` split** from ~2000 lines into `CalendarsSectionView`, `RoutesSectionView`, `ScheduleSectionView`, `LogSectionView` (plus a small shared `CalendarDisplay.swift`). View-layer extraction — state ownership and settings persistence were deliberately left untouched, since that's exactly the area the 1.6.0/1.6.1 release had to fix a real data-loss bug in.
+
+### Fixed
+- **Latent revert-on-relaunch bug**, caught while building the Settings window: moving the `@AppStorage`-backed preference controls out of `ContentView` meant changing them no longer re-triggered `saveSettingsToDefaults()`, so the `settings.v2` snapshot blob could go stale relative to the individual UserDefaults keys. Since `loadSettingsFromDefaults()` used the same full `applySnapshot` as Import, the next launch would silently revert a preference you'd just changed in Preferences back to whatever the stale blob had. Fixed by splitting launch-time restore into a narrow `restoreLaunchState` (routes + manual selection only — the only state that isn't already self-restoring via `@AppStorage`) separate from `applySnapshot` (unchanged, still used by Import where overwriting everything is the point). ([ContentView.swift](BusyMirror/ContentView.swift))
+
 ## [1.7.0] - 2026-08-26
 
 ### Added
