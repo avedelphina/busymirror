@@ -44,16 +44,18 @@ struct Route: Identifiable, Hashable, Codable {
     var targetIDs: Set<String>
     var privacy: Bool              // true = hide details for this source
     var copyNotes: Bool            // copy description when privacy is OFF
+    var syncReminders: Bool        // copy source event alarms into placeholder
     var mergeGapHours: Int         // per-route merge gap (hours)
     var overlap: OverlapMode       // per-route overlap behavior
     var allDay: Bool               // per-route mirror all-day
-    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, mergeGapHours, overlap, allDay }
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay }
 
-    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool) {
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool) {
         self.sourceID = sourceID
         self.targetIDs = targetIDs
         self.privacy = privacy
         self.copyNotes = copyNotes
+        self.syncReminders = syncReminders
         self.mergeGapHours = mergeGapHours
         self.overlap = overlap
         self.allDay = allDay
@@ -65,6 +67,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.targetIDs = try c.decode(Set<String>.self, forKey: .targetIDs)
         self.privacy = try c.decode(Bool.self, forKey: .privacy)
         self.copyNotes = try c.decode(Bool.self, forKey: .copyNotes)
+        self.syncReminders = try c.decodeIfPresent(Bool.self, forKey: .syncReminders) ?? false
         self.mergeGapHours = try c.decode(Int.self, forKey: .mergeGapHours)
         self.overlap = try c.decode(OverlapMode.self, forKey: .overlap)
         self.allDay = try c.decode(Bool.self, forKey: .allDay)
@@ -89,6 +92,7 @@ struct ContentView: View {
     private var mergeGapMin: Int { max(0, mergeGapHours * 60) }
     @AppStorage("hideDetails") private var hideDetails: Bool = true        // Privacy ON by default -> use "Busy"
     @AppStorage("copyDescription") private var copyDescription: Bool = false   // Only applies when hideDetails == false
+    @AppStorage("syncReminders") private var syncReminders: Bool = false       // Copy source alarms into mirrored placeholders
     @AppStorage("mirrorAllDay") private var mirrorAllDay: Bool = false
     @AppStorage("overlapMode") private var overlapModeRaw: String = OverlapMode.allow.rawValue
     @AppStorage("filterByWorkHours") private var filterByWorkHours: Bool = false
@@ -110,6 +114,10 @@ struct ContentView: View {
     @State private var logText = "Ready."
     @State private var isRunning = false
     @State private var isCLIRun = false
+    @State private var cliRunErrorCount = 0
+    @AppStorage("lastRunAtISO") private var lastRunAtISO: String = ""
+    @AppStorage("lastRunOK") private var lastRunOK: Bool = true
+    @AppStorage("lastRunSummary") private var lastRunSummary: String = ""
     @State private var confirmCleanup = false
     @State private var mirrorTask: Task<Void, Never>? = nil
     @State private var progressText: String? = nil
@@ -542,6 +550,7 @@ struct ContentView: View {
                                   targetIDs: targetIDs,
                                   privacy: hideDetails,
                                   copyNotes: copyDescription,
+                                  syncReminders: syncReminders,
                                   mergeGapHours: mergeGapHours,
                                   overlap: overlapMode,
                                   allDay: mirrorAllDay)
@@ -587,6 +596,9 @@ struct ContentView: View {
             Toggle("Copy description", isOn: routeBinding.copyNotes)
                 .disabled(isRunning || route.privacy)
                 .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+            Toggle("Sync reminders", isOn: routeBinding.syncReminders)
+                .disabled(isRunning)
+                .help("If ON, copy the source event’s reminders/alarms into the placeholder.")
             Toggle("Mirror all-day events for this route", isOn: routeBinding.allDay)
                 .disabled(isRunning)
                 .help("Mirror all-day events for this source.")
@@ -732,7 +744,8 @@ struct ContentView: View {
                 excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
                 mirrorAcceptedOnly: mirrorAcceptedOnly,
                 autoDeleteMissing: autoDeleteMissing,
-                writeEnabled: writeEnabled
+                writeEnabled: writeEnabled,
+                syncReminders: r.syncReminders
             )
             let srcCal = calendars[sIdx]
             let targets = calendars.filter { validTargets.contains($0.calendarIdentifier) && $0.calendarIdentifier != srcCal.calendarIdentifier }
@@ -776,7 +789,8 @@ struct ContentView: View {
             excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
             mirrorAcceptedOnly: mirrorAcceptedOnly,
             autoDeleteMissing: autoDeleteMissing,
-            writeEnabled: writeEnabled
+            writeEnabled: writeEnabled,
+            syncReminders: syncReminders
         )
     }
 
@@ -904,6 +918,8 @@ struct ContentView: View {
                 .disabled(isRunning)
             Toggle("Copy description when mirroring", isOn: $copyDescription)
                 .disabled(isRunning || hideDetails)
+            Toggle("Sync reminders when mirroring", isOn: $syncReminders)
+                .disabled(isRunning)
             Toggle("Mirror all-day events", isOn: $mirrorAllDay)
                 .disabled(isRunning)
             Toggle("Mirror accepted events only", isOn: $mirrorAcceptedOnly)
@@ -1309,6 +1325,7 @@ struct ContentView: View {
         .onChange(of: mergeGapHours) { _ in saveSettingsToDefaults() }
         .onChange(of: hideDetails) { _ in saveSettingsToDefaults() }
         .onChange(of: copyDescription) { _ in saveSettingsToDefaults() }
+        .onChange(of: syncReminders) { _ in saveSettingsToDefaults() }
         .onChange(of: mirrorAllDay) { _ in saveSettingsToDefaults() }
         .onChange(of: mirrorAcceptedOnly) { _ in saveSettingsToDefaults() }
         .onChange(of: overlapModeRaw) { _ in saveSettingsToDefaults() }
@@ -1339,12 +1356,166 @@ struct ContentView: View {
     }
     
     // MARK: - CLI support
+    private static let cliHelpText = """
+    BusyMirror — mirror calendar events between EventKit calendars.
+
+    Usage:
+      BusyMirror --run-saved-routes [--write 1] [--exit]
+      BusyMirror --routes "1->2,3; 4->5" [--write 1] [--exit]
+      BusyMirror --list-calendars [--json]
+      BusyMirror --status [--json]
+      BusyMirror --help
+
+    Run modes:
+      --run-saved-routes     Run the routes configured in the app's saved settings.
+      --routes SPEC          Run ad-hoc routes by 1-based calendar index, e.g. "1->2,3".
+      --list-calendars       Print available calendars (index, id, title, source) and exit.
+      --status               Print last-run and schedule diagnostics and exit.
+      --help, -h             Print this help and exit.
+
+    Options:
+      --json                 Machine-readable JSON output for --list-calendars / --status.
+      --write 1              Actually create/update/delete events (default: dry-run).
+      --exit                 Quit the app after the run completes.
+      --cleanup-only         Only delete stale mirrored placeholders; don't mirror.
+      --privacy 1|0          Hide event details behind a placeholder title.
+      --copy-notes 1|0       Copy the source event's notes into the mirror.
+      --sync-reminders 1|0   Copy source event alarms into the mirror.
+      --all-day 1|0          Mirror all-day events.
+      --mode allow|skipCovered|fillGaps
+      --days-back N / --days-forward N
+      --merge-gap-hours N
+      --exclude-titles "token1, token2"
+      --exclude-organizers "alice@example.com, Example Org"
+    """
+
+    private func recordRunResult(ok: Bool, summary: String) {
+        lastRunAtISO = ISO8601DateFormatter().string(from: Date())
+        lastRunOK = ok
+        lastRunSummary = summary
+    }
+
+    private struct CLICalendarInfo: Codable {
+        let index: Int
+        let id: String
+        let title: String
+        let source: String
+        let sourceType: String
+        let allowsModify: Bool
+    }
+
+    private struct CLIStatusInfo: Codable {
+        let lastRunAt: String?
+        let lastRunOK: Bool?
+        let lastRunSummary: String?
+        let scheduleInstalled: Bool
+        let scheduleSummary: String?
+        let routeCount: Int
+        let logFilePath: String
+    }
+
+    private func sourceTypeLabel(_ type: EKSourceType) -> String {
+        switch type {
+        case .local: return "local"
+        case .exchange: return "exchange"
+        case .calDAV: return "calDAV"
+        case .mobileMe: return "iCloud"
+        case .subscribed: return "subscribed"
+        case .birthdays: return "birthdays"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func printCalendars(json: Bool) {
+        let infos = calendars.enumerated().map { idx, cal in
+            CLICalendarInfo(
+                index: idx + 1,
+                id: cal.calendarIdentifier,
+                title: cal.title,
+                source: cal.source.title,
+                sourceType: sourceTypeLabel(cal.source.sourceType),
+                allowsModify: cal.allowsContentModifications
+            )
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(infos), let s = String(data: data, encoding: .utf8) {
+                print(s)
+            }
+        } else {
+            for info in infos {
+                print("\(info.index): \(info.title) [\(info.source), \(info.sourceType)]\(info.allowsModify ? "" : " (read-only)")  id=\(info.id)")
+            }
+        }
+    }
+
+    private func printStatus(json: Bool) {
+        let info = CLIStatusInfo(
+            lastRunAt: lastRunAtISO.isEmpty ? nil : lastRunAtISO,
+            lastRunOK: lastRunAtISO.isEmpty ? nil : lastRunOK,
+            lastRunSummary: lastRunSummary.isEmpty ? nil : lastRunSummary,
+            scheduleInstalled: hasInstalledSchedule,
+            scheduleSummary: hasInstalledSchedule ? scheduleSummary : nil,
+            routeCount: routes.count,
+            logFilePath: AppLogStore.logFileURL.path
+        )
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(info), let s = String(data: data, encoding: .utf8) {
+                print(s)
+            }
+        } else {
+            print("Last run: \(info.lastRunAt ?? "never")\(info.lastRunAt != nil ? (info.lastRunOK == true ? " (ok)" : " (error)") : "")")
+            if let summary = info.lastRunSummary { print("  \(summary)") }
+            print("Schedule: \(info.scheduleInstalled ? (info.scheduleSummary ?? "installed") : "not installed")")
+            print("Saved routes: \(info.routeCount)")
+            print("Log file: \(info.logFilePath)")
+        }
+    }
+
     func tryRunCLIIfPresent() {
         let args = CommandLine.arguments
+        let jsonOutput = args.contains("--json")
+
+        if args.contains("--help") || args.contains("-h") {
+            isCLIRun = true
+            print(Self.cliHelpText)
+            NSApp.terminate(nil)
+            return
+        }
+
+        if args.contains("--status") {
+            isCLIRun = true
+            printStatus(json: jsonOutput)
+            NSApp.terminate(nil)
+            return
+        }
+
+        if args.contains("--list-calendars") {
+            isCLIRun = true
+            Task {
+                if hasAccess { await MainActor.run { reloadCalendars() } }
+                for _ in 0..<50 {
+                    if hasAccess && !calendars.isEmpty { break }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                guard hasAccess else {
+                    FileHandle.standardError.write("No calendar access.\n".data(using: .utf8)!)
+                    exit(2)
+                }
+                await MainActor.run { printCalendars(json: jsonOutput) }
+                NSApp.terminate(nil)
+            }
+            return
+        }
+
         let routesIdx = args.firstIndex(of: "--routes")
         let runSavedRoutes = args.contains("--run-saved-routes")
         guard routesIdx != nil || runSavedRoutes else { return }
         isCLIRun = true
+        cliRunErrorCount = 0
 
         func boolArg(_ name: String, default def: Bool) -> Bool {
             if let i = args.firstIndex(of: name), i+1 < args.count {
@@ -1365,6 +1536,7 @@ struct ContentView: View {
         // Configure options from CLI flags
         hideDetails = boolArg("--privacy", default: hideDetails)
         copyDescription = boolArg("--copy-notes", default: copyDescription)
+        syncReminders = boolArg("--sync-reminders", default: syncReminders)
         writeEnabled = boolArg("--write", default: writeEnabled)
         mirrorAllDay = boolArg("--all-day", default: mirrorAllDay)
         daysForward = intArg("--days-forward", default: daysForward)
@@ -1405,22 +1577,26 @@ struct ContentView: View {
             }
             guard hasAccess, !calendars.isEmpty else {
                 log("CLI: no calendar access; aborting")
-                NSApp.terminate(nil)
-                return
+                recordRunResult(ok: false, summary: "no calendar access")
+                exit(2)
             }
 
             let cliConfig = makeMirrorConfig()
             if runSavedRoutes {
                 if routes.isEmpty {
                     log("CLI: no saved routes; aborting")
+                    recordRunResult(ok: false, summary: "no saved routes")
+                    exit(3)
                 } else if boolArg("--cleanup-only", default: false) {
                     for r in routes {
                         log("CLI: cleanup saved route \(r.sourceID)")
                         await runCleanupForRoute(r)
                     }
+                    recordRunResult(ok: cliRunErrorCount == 0, summary: "cleaned up \(routes.count) saved route(s)")
                 } else {
                     var sessionGuard = Set<String>()
                     await runConfiguredRoutes(routes, sessionGuard: &sessionGuard)
+                    recordRunResult(ok: cliRunErrorCount == 0, summary: "ran \(routes.count) saved route(s)")
                 }
             } else {
                 for part in routeParts where !part.isEmpty {
@@ -1450,6 +1626,7 @@ struct ContentView: View {
                         await engine.runMirror(store: store, config: cliConfig, sourceCalendar: srcCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: false)
                     }
                 }
+                recordRunResult(ok: cliRunErrorCount == 0, summary: "ran \(routeParts.count) route(s)")
             }
             // Exit only when --exit is explicitly passed.  isCLIRun alone does
             // not force termination so that advanced users can open the UI with
@@ -1542,12 +1719,13 @@ struct ContentView: View {
     }
     
     // MARK: - Export / Import Settings
-    private struct SettingsPayload: Codable {
+    struct SettingsPayload: Codable {
         var daysBack: Int
         var daysForward: Int
         var mergeGapHours: Int
         var hideDetails: Bool
         var copyDescription: Bool
+        var syncReminders: Bool = false
         var mirrorAllDay: Bool
         var filterByWorkHours: Bool = false
         var workHoursStart: Int = 9
@@ -1566,6 +1744,67 @@ struct ContentView: View {
         // optional metadata
         var appVersion: String?
         var exportedAt: Date = Date()
+
+        init(daysBack: Int, daysForward: Int, mergeGapHours: Int, hideDetails: Bool, copyDescription: Bool,
+             syncReminders: Bool = false, mirrorAllDay: Bool, filterByWorkHours: Bool, workHoursStart: Int,
+             workHoursEnd: Int, excludedTitleFilters: [String], excludedOrganizerFilters: [String],
+             mirrorAcceptedOnly: Bool, overlapMode: String, titlePrefix: String, placeholderTitle: String,
+             autoDeleteMissing: Bool, routes: [Route], selectedSourceID: String? = nil,
+             selectedTargetIDs: [String]? = nil, appVersion: String? = nil, exportedAt: Date = Date()) {
+            self.daysBack = daysBack
+            self.daysForward = daysForward
+            self.mergeGapHours = mergeGapHours
+            self.hideDetails = hideDetails
+            self.copyDescription = copyDescription
+            self.syncReminders = syncReminders
+            self.mirrorAllDay = mirrorAllDay
+            self.filterByWorkHours = filterByWorkHours
+            self.workHoursStart = workHoursStart
+            self.workHoursEnd = workHoursEnd
+            self.excludedTitleFilters = excludedTitleFilters
+            self.excludedOrganizerFilters = excludedOrganizerFilters
+            self.mirrorAcceptedOnly = mirrorAcceptedOnly
+            self.overlapMode = overlapMode
+            self.titlePrefix = titlePrefix
+            self.placeholderTitle = placeholderTitle
+            self.autoDeleteMissing = autoDeleteMissing
+            self.routes = routes
+            self.selectedSourceID = selectedSourceID
+            self.selectedTargetIDs = selectedTargetIDs
+            self.appVersion = appVersion
+            self.exportedAt = exportedAt
+        }
+
+        // Custom decode: every field added after the very first release must be
+        // read with decodeIfPresent so that a settings blob written by an older
+        // build (missing that key) doesn't fail the whole decode and silently
+        // wipe all saved routes/settings (see: settings.v2 losing data across
+        // the 1.5.1 -> 1.6.0 upgrade when `syncReminders` was added).
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            daysBack = try c.decodeIfPresent(Int.self, forKey: .daysBack) ?? 1
+            daysForward = try c.decodeIfPresent(Int.self, forKey: .daysForward) ?? 7
+            mergeGapHours = try c.decodeIfPresent(Int.self, forKey: .mergeGapHours) ?? 0
+            hideDetails = try c.decodeIfPresent(Bool.self, forKey: .hideDetails) ?? true
+            copyDescription = try c.decodeIfPresent(Bool.self, forKey: .copyDescription) ?? false
+            syncReminders = try c.decodeIfPresent(Bool.self, forKey: .syncReminders) ?? false
+            mirrorAllDay = try c.decodeIfPresent(Bool.self, forKey: .mirrorAllDay) ?? false
+            filterByWorkHours = try c.decodeIfPresent(Bool.self, forKey: .filterByWorkHours) ?? false
+            workHoursStart = try c.decodeIfPresent(Int.self, forKey: .workHoursStart) ?? 9
+            workHoursEnd = try c.decodeIfPresent(Int.self, forKey: .workHoursEnd) ?? 17
+            excludedTitleFilters = try c.decodeIfPresent([String].self, forKey: .excludedTitleFilters) ?? []
+            excludedOrganizerFilters = try c.decodeIfPresent([String].self, forKey: .excludedOrganizerFilters) ?? []
+            mirrorAcceptedOnly = try c.decodeIfPresent(Bool.self, forKey: .mirrorAcceptedOnly) ?? false
+            overlapMode = try c.decodeIfPresent(String.self, forKey: .overlapMode) ?? OverlapMode.allow.rawValue
+            titlePrefix = try c.decodeIfPresent(String.self, forKey: .titlePrefix) ?? "🪞 "
+            placeholderTitle = try c.decodeIfPresent(String.self, forKey: .placeholderTitle) ?? "Busy"
+            autoDeleteMissing = try c.decodeIfPresent(Bool.self, forKey: .autoDeleteMissing) ?? true
+            routes = try c.decodeIfPresent([Route].self, forKey: .routes) ?? []
+            selectedSourceID = try c.decodeIfPresent(String.self, forKey: .selectedSourceID)
+            selectedTargetIDs = try c.decodeIfPresent([String].self, forKey: .selectedTargetIDs)
+            appVersion = try c.decodeIfPresent(String.self, forKey: .appVersion)
+            exportedAt = try c.decodeIfPresent(Date.self, forKey: .exportedAt) ?? Date()
+        }
     }
 
     private func makeSnapshot() -> SettingsPayload {
@@ -1600,6 +1839,7 @@ struct ContentView: View {
         mergeGapHours = s.mergeGapHours
         hideDetails = s.hideDetails
         copyDescription = s.copyDescription
+        syncReminders = s.syncReminders
         mirrorAllDay = s.mirrorAllDay
         filterByWorkHours = s.filterByWorkHours
         workHoursStart = s.workHoursStart
@@ -1703,6 +1943,18 @@ struct ContentView: View {
             do {
                 let snap = try JSONDecoder().decode(SettingsPayload.self, from: data)
                 applySnapshot(snap)
+                // A build affected by an earlier settings.v2 decode failure (fixed
+                // in 1.6.0 — a newly added field with no decode fallback threw and
+                // wiped routes in memory, which a later autosave then persisted
+                // back as empty) can still be running with `routes: []` in
+                // settings.v2 while the untouched legacy `routes.v1` key still
+                // holds the real routes. Recover them if so.
+                if routes.isEmpty, let legacyData = defaults.data(forKey: legacyRoutesDefaultsKey),
+                   let recovered = try? JSONDecoder().decode([Route].self, from: legacyData), !recovered.isEmpty {
+                    routes = recovered
+                    log("Recovered \(recovered.count) route(s) from legacy backup (routes.v1).")
+                    saveSettingsToDefaults()
+                }
             } catch {
                 log("✗ Failed to load settings: \(error.localizedDescription)")
             }
@@ -1737,6 +1989,12 @@ struct ContentView: View {
     // MARK: - Logging
     func log(_ s: String) {
         AppLogStore.append(s)
+        if isCLIRun {
+            let lower = s.lowercased()
+            if lower.contains("error") || lower.contains("fail") {
+                cliRunErrorCount += 1
+            }
+        }
         DispatchQueue.main.async {
             logText.append("\n" + s)
             let maxLines = 2000

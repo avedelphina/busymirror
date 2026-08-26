@@ -3,6 +3,24 @@ import EventKit
 
 private let SAME_TIME_TOL_MIN: Double = 5
 
+private func alarmOffsets(for event: EKEvent) -> [TimeInterval]? {
+    guard let alarms = event.alarms, !alarms.isEmpty else { return nil }
+    let offsets = alarms.compactMap { alarm -> TimeInterval? in
+        if alarm.relativeOffset != 0 {
+            return alarm.relativeOffset
+        }
+        if let absoluteDate = alarm.absoluteDate, let start = event.startDate {
+            return absoluteDate.timeIntervalSince(start)
+        }
+        return nil
+    }
+    return offsets.isEmpty ? nil : offsets
+}
+
+private func alarmsFromOffsets(_ offsets: [TimeInterval]) -> [EKAlarm] {
+    offsets.map { EKAlarm(relativeOffset: $0) }
+}
+
 struct MirrorRecord: Hashable, Codable {
     var targetCalendarID: String
     var sourceCalendarID: String
@@ -160,7 +178,7 @@ final class MirrorEngine {
             guard let s = ev.startDate, let e = ev.endDate, e > s else { continue }
             guard ev.calendar.calendarIdentifier == srcCal.calendarIdentifier else { continue }
             let srcID = stableSourceIdentifier(for: ev)
-            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate))
+            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate, alarmOffsets: alarmOffsets(for: ev)))
         }
         if skippedMirrors > 0 {
             log("- SKIP mirrored-on-source: \(skippedMirrors) instance(s)")
@@ -324,6 +342,17 @@ final class MirrorEngine {
                 upsertMirrorRecord(for: blk, event: event)
             }
 
+            func desiredAlarms(for blk: Block) -> [EKAlarm] {
+                guard config.syncReminders, let offsets = blk.alarmOffsets else { return [] }
+                return alarmsFromOffsets(offsets)
+            }
+
+            func alarmsEqual(_ a: [EKAlarm], _ b: [EKAlarm]) -> Bool {
+                let offsetsA = a.compactMap { $0.relativeOffset }.sorted()
+                let offsetsB = b.compactMap { $0.relativeOffset }.sorted()
+                return offsetsA == offsetsB
+            }
+
             func needsUpdate(existing: EKEvent, blk: Block, displayTitle: String, desiredNotes: String?, desiredURL: URL?) -> Bool {
                 let curS = existing.startDate ?? blk.start
                 let curE = existing.endDate ?? blk.end
@@ -333,6 +362,9 @@ final class MirrorEngine {
                 if (existing.notes ?? "") != (desiredNotes ?? "") { return true }
                 if existing.isAllDay { return true }
                 if (existing.url?.absoluteString ?? "") != (desiredURL?.absoluteString ?? "") { return true }
+                let newAlarms = desiredAlarms(for: blk)
+                let existingAlarms = existing.alarms ?? []
+                if !alarmsEqual(newAlarms, existingAlarms) { return true }
                 return false
             }
 
@@ -382,6 +414,7 @@ final class MirrorEngine {
                     existing.isAllDay = false
                     existing.notes = notes
                     existing.url = desiredURL
+                    existing.alarms = desiredAlarms(for: blk)
                     do {
                         try store.save(existing, span: .thisEvent, commit: true)
                         log("✓ UPDATED [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(blk.start) -> \(blk.end)")
@@ -433,6 +466,7 @@ final class MirrorEngine {
                 newEv.isAllDay = false
                 newEv.notes = notes
                 newEv.url = desiredURL
+                newEv.alarms = desiredAlarms(for: blk)
                 newEv.availability = .busy
                 do {
                     try store.save(newEv, span: .thisEvent, commit: true)

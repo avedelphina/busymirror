@@ -2,6 +2,16 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.6.1] - 2026-08-26
+
+### Added
+- **Sync reminders**: new "Sync reminders when mirroring" option (global and per-route) copies source event alarms/relative offsets into mirrored placeholders. This lets calendars that are synced to a phone ring for mirrored events. When merging is enabled, only the first event's alarms are preserved for a merged block. ([ContentView.swift](BusyMirror/ContentView.swift), [MirrorEngine.swift](BusyMirror/MirrorEngine.swift), [BlockMath.swift](BusyMirror/BlockMath.swift))
+- CLI flag `--sync-reminders` to enable reminder syncing from scripted/headless runs.
+- CLI polish: `--help`/`-h`, `--list-calendars`, and `--status` (all support `--json` for machine-readable output). Scheduled/headless runs now record last-run time, success/failure, and a summary so `--status` can report real diagnostics instead of just log-file grepping. Failure paths (`no calendar access`, `no saved routes`) now exit with distinct nonzero codes instead of always exiting 0. ([ContentView.swift](BusyMirror/ContentView.swift))
+
+### Fixed
+- **Settings silently wiped on upgrade**: `SettingsPayload` used fully auto-synthesized `Codable`, so decoding a settings blob written by an older build (missing a field added since, e.g. `syncReminders`) threw `keyNotFound` and failed the *entire* decode — not just that one field. The app then ran with in-code defaults (empty routes, filters, etc.), and the next autosave persisted that empty state back over the real data. `SettingsPayload` now has a custom `init(from:)` that reads every field added after the first release with `decodeIfPresent` + its existing default, matching the pattern `Route` already used. `loadSettingsFromDefaults()` also now recovers routes from the legacy `routes.v1` backup key if `settings.v2` decodes successfully but with an empty `routes` array — repairing installs that already hit this bug before upgrading. ([ContentView.swift](BusyMirror/ContentView.swift), [SettingsPayloadTests.swift](BusyMirrorTests/SettingsPayloadTests.swift))
+
 ## [1.5.1] - 2026-05-27
 
 ### Fixed

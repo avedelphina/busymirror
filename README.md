@@ -45,11 +45,15 @@ See `CHANGELOG.md` for notable changes.
   - `BusyMirror.app/Contents/MacOS/BusyMirror --routes "1->2,3; 4->5" --write 1 --days-forward 7 --mode allow --exit`
 - Run the routes already saved in the app settings:
   - `BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit`
+- `--help` prints full flag documentation.
+- `--list-calendars [--json]` prints available calendars (index, id, title, source/type) and exits.
+- `--status [--json]` prints last-run time/result, schedule state, and saved-route count and exits.
 - Flags exist for privacy, all-day, merge gap, days window, overlap mode, cleanup, and filters.
 - Filters:
   - `--exclude-titles "token1, token2"`
   - `--exclude-organizers "alice@example.com, Example Org"`
   - Tokens are comma or newline separated; matching is case-insensitive.
+- Exit codes: `0` success, `2` no calendar access, `3` no saved routes (with `--run-saved-routes`).
 
 ## Logs
 - BusyMirror now writes a persistent log file to `~/Library/Logs/BusyMirror/BusyMirror.log`.

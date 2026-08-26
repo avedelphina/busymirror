@@ -127,7 +127,9 @@ BusyMirror.app/Contents/MacOS/BusyMirror --run-saved-routes --write 1 --exit
 BusyMirror.app/Contents/MacOS/BusyMirror --routes "1->2,3" --write 1 --exit
 ```
 
-Relevant flags: `--privacy`, `--copy-notes`, `--all-day`, `--days-forward`, `--days-back`, `--merge-gap-hours`, `--mode`, `--exclude-titles`, `--exclude-organizers`, `--cleanup-only`, `--exit`.
+Relevant flags: `--privacy`, `--copy-notes`, `--sync-reminders`, `--all-day`, `--days-forward`, `--days-back`, `--merge-gap-hours`, `--mode`, `--exclude-titles`, `--exclude-organizers`, `--cleanup-only`, `--exit`.
+
+Diagnostic/query flags (no calendar write, exit immediately): `--help`/`-h`, `--list-calendars [--json]`, `--status [--json]`. `--status` reads `lastRunAtISO`/`lastRunOK`/`lastRunSummary` in `UserDefaults`, written by `recordRunResult(ok:summary:)` at the end of every `--routes`/`--run-saved-routes` invocation. Exit codes: `2` = no calendar access, `3` = `--run-saved-routes` with no saved routes.
 
 Scheduled runs are implemented by generating a `launchd` plist in `~/Library/LaunchAgents/com.cqrenet.BusyMirror.saved-routes.plist` and bootstrapping it with `launchctl`. The app removes and re-bootstraps the agent on every "Install Schedule" click.
 

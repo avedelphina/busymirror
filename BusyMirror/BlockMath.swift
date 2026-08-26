@@ -7,10 +7,31 @@ struct Block: Hashable {
     let label: String?        // source title (for dry-run / non-private)
     let notes: String?        // source notes (for optional copy)
     let occurrence: Date?     // occurrenceDate for recurring instances
+    let alarmOffsets: [TimeInterval]?  // relative alarm offsets copied from source event
 
     /// Convenience factory for time-only blocks (used internally for occupancy tracking).
     static func span(start: Date, end: Date) -> Block {
-        Block(start: start, end: end, srcStableID: nil, label: nil, notes: nil, occurrence: nil)
+        Block(start: start, end: end, srcStableID: nil, label: nil, notes: nil, occurrence: nil, alarmOffsets: nil)
+    }
+
+    // Alarms are carried along for mirroring but do not affect time-based
+    // deduplication, merging, or overlap calculations.
+    static func == (lhs: Block, rhs: Block) -> Bool {
+        lhs.start == rhs.start &&
+        lhs.end == rhs.end &&
+        lhs.srcStableID == rhs.srcStableID &&
+        lhs.label == rhs.label &&
+        lhs.notes == rhs.notes &&
+        lhs.occurrence == rhs.occurrence
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(start)
+        hasher.combine(end)
+        hasher.combine(srcStableID)
+        hasher.combine(label)
+        hasher.combine(notes)
+        hasher.combine(occurrence)
     }
 }
 
@@ -36,16 +57,18 @@ func mergeBlocks(_ blocks: [Block], gapMinutes: Int) -> [Block] {
     let sorted = blocks.sorted { $0.start < $1.start }
     var out: [Block] = []
     var cur = Block.span(start: sorted[0].start, end: sorted[0].end)
+    var curAlarms = sorted[0].alarmOffsets
     for b in sorted.dropFirst() {
         let gap = b.start.timeIntervalSince(cur.end) / 60.0
         if gap <= Double(gapMinutes) {
             if b.end > cur.end { cur = Block.span(start: cur.start, end: b.end) }
         } else {
-            out.append(cur)
+            out.append(Block(start: cur.start, end: cur.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil, alarmOffsets: curAlarms))
             cur = Block.span(start: b.start, end: b.end)
+            curAlarms = b.alarmOffsets
         }
     }
-    out.append(cur)
+    out.append(Block(start: cur.start, end: cur.end, srcStableID: nil, label: nil, notes: nil, occurrence: nil, alarmOffsets: curAlarms))
     return out
 }
 

@@ -5,14 +5,15 @@ final class BlockMathTests: XCTestCase {
 
     private let d = Date(timeIntervalSince1970: 0)
 
-    private func block(_ startMin: Int, _ endMin: Int, id: String? = nil) -> Block {
+    private func block(_ startMin: Int, _ endMin: Int, id: String? = nil, alarmOffsets: [TimeInterval]? = nil) -> Block {
         Block(
             start: d.addingTimeInterval(TimeInterval(startMin * 60)),
             end: d.addingTimeInterval(TimeInterval(endMin * 60)),
             srcStableID: id,
             label: nil,
             notes: nil,
-            occurrence: nil
+            occurrence: nil,
+            alarmOffsets: alarmOffsets
         )
     }
 
@@ -42,6 +43,21 @@ final class BlockMathTests: XCTestCase {
 
     func testMergeBlocksEmpty() {
         XCTAssertTrue(mergeBlocks([], gapMinutes: 10).isEmpty)
+    }
+
+    func testMergeBlocksPreservesFirstAlarms() {
+        let b1 = block(0, 10, alarmOffsets: [-900, -3600])
+        let b2 = block(10, 20, alarmOffsets: [-600])
+        let merged = mergeBlocks([b1, b2], gapMinutes: 0)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].alarmOffsets, [-900, -3600])
+    }
+
+    func testBlockEqualityIgnoresAlarms() {
+        let b1 = block(0, 10, alarmOffsets: [-900])
+        let b2 = block(0, 10, alarmOffsets: [-1800])
+        XCTAssertEqual(b1, b2)
+        XCTAssertEqual(Set([b1, b2]).count, 1)
     }
 
     func testMergeBlocksUnsortedInput() {
@@ -150,8 +166,8 @@ final class BlockMathTests: XCTestCase {
     }
 
     func testUniqueBlocksByIDDifferentOccurrence() {
-        let b1 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d)
-        let b2 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d.addingTimeInterval(3600))
+        let b1 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d, alarmOffsets: nil)
+        let b2 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d.addingTimeInterval(3600), alarmOffsets: nil)
         let result = uniqueBlocks([b1, b2], trackByID: true)
         XCTAssertEqual(result.count, 2)
     }

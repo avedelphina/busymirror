@@ -19,4 +19,5 @@ struct MirrorConfig {
     let mirrorAcceptedOnly: Bool
     let autoDeleteMissing: Bool
     let writeEnabled: Bool
+    let syncReminders: Bool
 }
