@@ -23,17 +23,14 @@ struct BusyMirrorApp: App {
                 .environmentObject(appController)
         }
 
-        // A plain Window rather than a Settings scene: this was originally
-        // required because the app was LSUIElement (accessory) and got no
-        // standard app menu for Cmd+,/SettingsLink to hook into. Now that
-        // it's a standard app that menu exists, but openWindow(id:) already
-        // works reliably (same mechanism as the main window) so there's no
-        // reason to switch back.
-        Window("Preferences", id: BusyMirrorSceneID.preferencesWindow) {
+        // A real Settings scene: now that the app is standard (not
+        // LSUIElement), this gets the conventional Cmd+, and a "Preferences…"
+        // item in the app's own menu for free — the location people actually
+        // look, unlike a plain Window which only opens from wherever we
+        // explicitly put a button for it.
+        Settings {
             PreferencesView()
                 .environmentObject(appController)
         }
-        .defaultSize(width: 480, height: 560)
-        .windowResizability(.contentSize)
     }
 }

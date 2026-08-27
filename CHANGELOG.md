@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.8.3] - 2026-08-27
+
+### Fixed
+- **Preferences missing from the standard app menu.** 1.8.1's fix for Preferences (a plain `Window` opened via `openWindow`) worked around `LSUIElement` having no app menu, but 1.8.2 removed `LSUIElement` and the workaround was never swapped back — so there was still no "Preferences…" in the app's own menu or Cmd+, response, only a button buried in the main window and a menu-bar-dropdown item. Restored a real `Settings { }` scene now that the app menu exists to host it; both the menu bar dropdown and the main window's button now call the standard `openSettings()` action (via `SettingsLink` in the main window) instead of a custom `openWindow(id:)`. ([BusyMirrorApp.swift](BusyMirror/BusyMirrorApp.swift), [MenuBarSupport.swift](BusyMirror/MenuBarSupport.swift), [ContentView.swift](BusyMirror/ContentView.swift))
+
 ## [1.8.2] - 2026-08-27
 
 ### Changed

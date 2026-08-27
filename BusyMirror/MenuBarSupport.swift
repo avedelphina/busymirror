@@ -5,7 +5,6 @@ import ServiceManagement
 
 enum BusyMirrorSceneID {
     static let mainWindow = "main-window"
-    static let preferencesWindow = "preferences-window"
 }
 
 @MainActor
@@ -65,11 +64,6 @@ final class BusyMirrorAppController: ObservableObject {
     func openMainWindow(using openWindow: OpenWindowAction) {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: BusyMirrorSceneID.mainWindow)
-    }
-
-    func openPreferencesWindow(using openWindow: OpenWindowAction) {
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: BusyMirrorSceneID.preferencesWindow)
     }
 
     // MARK: - Event-driven background sync
@@ -256,6 +250,7 @@ final class BusyMirrorAppController: ObservableObject {
 
 struct BusyMirrorMenuBarView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @EnvironmentObject private var appController: BusyMirrorAppController
 
     var body: some View {
@@ -287,7 +282,8 @@ struct BusyMirrorMenuBarView: View {
             }
 
             Button("Preferences…") {
-                appController.openPreferencesWindow(using: openWindow)
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
             }
 
             Divider()
