@@ -15,6 +15,8 @@ struct RoutesSectionView: View {
     let canAddRoute: Bool
     let onAddRoute: () -> Void
 
+    @State private var expandedRouteID: UUID?
+
     private static let intFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.minimum = 0
@@ -56,36 +58,51 @@ struct RoutesSectionView: View {
     @ViewBuilder
     private func routeCard(for routeBinding: Binding<Route>) -> some View {
         let route = routeBinding.wrappedValue
+        let isExpanded = expandedRouteID == route.id
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 8) {
-                    sourceSummaryView(for: route)
-                    targetSummaryView(for: route)
+            Button {
+                expandedRouteID = isExpanded ? nil : route.id
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 12)
+                        .padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 8) {
+                        sourceSummaryView(for: route)
+                        targetSummaryView(for: route)
+                    }
+                    Spacer(minLength: 12)
                 }
-                Spacer(minLength: 12)
-                Button(role: .destructive) {
-                    routes.removeAll { $0.id == route.id }
-                } label: { Text("Remove") }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            Divider()
+            if isExpanded {
+                Divider()
 
-            Toggle("Private", isOn: routeBinding.privacy)
-                .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
-            Toggle("Copy description", isOn: routeBinding.copyNotes)
-                .disabled(isRunning || route.privacy)
-                .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
-            Toggle("Sync reminders", isOn: routeBinding.syncReminders)
-                .disabled(isRunning)
-                .help("If ON, copy the source event’s reminders/alarms into the placeholder.")
-            Toggle("Mirror all-day events for this route", isOn: routeBinding.allDay)
-                .disabled(isRunning)
-                .help("Mirror all-day events for this source.")
+                Toggle("Private", isOn: routeBinding.privacy)
+                    .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
+                Toggle("Copy description", isOn: routeBinding.copyNotes)
+                    .disabled(isRunning || route.privacy)
+                    .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
+                Toggle("Sync reminders", isOn: routeBinding.syncReminders)
+                    .disabled(isRunning)
+                    .help("If ON, copy the source event’s reminders/alarms into the placeholder.")
+                Toggle("Mirror all-day events for this route", isOn: routeBinding.allDay)
+                    .disabled(isRunning)
+                    .help("Mirror all-day events for this source.")
 
-            HStack(spacing: 16) {
-                mergeGapField(for: routeBinding)
-                overlapPicker(for: routeBinding)
-                Spacer(minLength: 0)
+                HStack(spacing: 16) {
+                    mergeGapField(for: routeBinding)
+                    overlapPicker(for: routeBinding)
+                    Spacer(minLength: 0)
+                    Button(role: .destructive) {
+                        routes.removeAll { $0.id == route.id }
+                    } label: { Text("Remove Route") }
+                }
             }
         }
         .padding(12)

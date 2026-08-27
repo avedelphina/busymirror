@@ -21,6 +21,27 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
+    case routes, schedule, log
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .routes: return "Routes"
+        case .schedule: return "Schedule"
+        case .log: return "Activity Log"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .routes: return "arrow.triangle.branch"
+        case .schedule: return "clock"
+        case .log: return "terminal"
+        }
+    }
+}
+
 
 struct Route: Identifiable, Hashable, Codable {
     let id = UUID()
@@ -70,6 +91,8 @@ struct ContentView: View {
     @State private var sourceID: String? = nil
     @State private var targetIDs = Set<String>()
     @State private var routes: [Route] = []
+    @State private var selectedSection: SidebarSection? = .routes
+    @State private var manualSelectionExpanded = false
     @AppStorage("daysForward") private var daysForward: Int = 7
     @AppStorage("daysBack") private var daysBack: Int = 1
     @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
@@ -383,71 +406,6 @@ struct ContentView: View {
         targetIDs.remove(sid)
     }
 
-    // MARK: - Extracted UI sections to simplify type-checking
-    private var selectedSourceName: String {
-        guard calendars.indices.contains(sourceIndex) else { return "Not selected" }
-        return calLabel(calendars[sourceIndex])
-    }
-
-    @ViewBuilder
-    private func statusPill(
-        _ title: String,
-        systemImage: String,
-        fill: Color,
-        foreground: Color = .white
-    ) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption.weight(.bold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(fill)
-            )
-            .foregroundStyle(foreground)
-    }
-
-    @ViewBuilder
-    private func panelCard<Content: View>(
-        title: String,
-        subtitle: String? = nil,
-        symbol: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(.black)
-                    )
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-            }
-            content()
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.34), lineWidth: 1.2)
-        )
-    }
-
     private func addRouteFromCurrentSelection() {
         guard let sid = sourceID, !targetIDs.isEmpty else { return }
         let r = Route(sourceID: sid,
@@ -609,62 +567,209 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func optionsSection() -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Text("Mirroring defaults, filters, and work hours moved to Preferences.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                SettingsLink {
-                    Text("Open Preferences…")
+    private var sidebarView: some View {
+        List(SidebarSection.allCases, selection: $selectedSection) { section in
+            Label {
+                HStack {
+                    Text(section.title)
+                    if section == .routes && !routes.isEmpty {
+                        Spacer()
+                        Text("\(routes.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 0)
+            } icon: {
+                Image(systemName: section.icon)
+            }
+            .tag(section as SidebarSection?)
+        }
+        .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+    }
+
+    @ViewBuilder
+    private var accessNeededView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text("Calendar Permission Needed")
+                .font(.title3.weight(.semibold))
+            Text("BusyMirror needs access to read and mirror your events.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Request Calendar Access") {
+                requestAccess()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle("BusyMirror")
+    }
+
+    @ViewBuilder
+    private var routesDetailView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                DisclosureGroup("Manual Selection", isExpanded: $manualSelectionExpanded) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        CalendarsSectionView(
+                            calendars: calendars,
+                            sourceIndex: $sourceIndex,
+                            targetSelections: $targetSelections,
+                            targetIDs: $targetIDs,
+                            isRunning: isRunning
+                        )
+                        HStack {
+                            Spacer()
+                            Button("Add Route from Selection", action: addRouteFromCurrentSelection)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isRunning || sourceID == nil || targetIDs.isEmpty)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                .font(.headline)
+
+                Divider()
+
+                RoutesSectionView(
+                    routes: $routes,
+                    calendars: calendars,
+                    isRunning: isRunning,
+                    titlePrefix: titlePrefix,
+                    placeholderTitle: placeholderTitle,
+                    canAddRoute: sourceID != nil && !targetIDs.isEmpty,
+                    onAddRoute: addRouteFromCurrentSelection
+                )
+            }
+            .padding(20)
+        }
+    }
+
+    @ViewBuilder
+    private var scheduleDetailView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Automatic Sync")
+                        .font(.title2.weight(.bold))
+                    Text("Runs on its own when your calendars change — no schedule to manage.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 0) {
+                    HStack(spacing: 12) {
+                        Image(systemName: appController.autoSyncArmed ? "checkmark.circle.fill" : "circle.dashed")
+                            .foregroundStyle(appController.autoSyncArmed ? .green : .secondary)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(appController.autoSyncArmed ? "Auto-sync active" : "Auto-sync not active")
+                                .font(.subheadline.weight(.semibold))
+                            Text(appController.autoSyncArmed ? "Watching for calendar changes, wake, and a 30-min fallback" : "Add a saved route below to enable")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(14)
+                    Divider()
+                    HStack(spacing: 12) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Last sync")
+                                .font(.subheadline.weight(.semibold))
+                            Text(appController.lastRunStatusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(14)
+                }
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary.opacity(0.12)))
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Manual Schedule (optional)")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Add a fixed-time schedule on top of auto-sync — a guaranteed full resync at a specific hour regardless of what changed.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ScheduleSectionView(
+                        scheduleMode: Binding(
+                            get: { scheduleMode },
+                            set: { newValue in
+                                scheduleMode = newValue
+                                scheduleWeekdaysOnly = (newValue == .weekdays)
+                            }
+                        ),
+                        scheduleIntervalHours: $scheduleIntervalHours,
+                        scheduleHour: $scheduleHour,
+                        scheduleMinute: $scheduleMinute,
+                        isRunning: isRunning,
+                        routesEmpty: routes.isEmpty,
+                        hasInstalledSchedule: hasInstalledSchedule,
+                        scheduleSummary: scheduleSummary,
+                        onInstall: installSchedule,
+                        onRemove: removeSchedule,
+                        onRevealLaunchAgent: { NSWorkspace.shared.activateFileViewerSelecting([launchAgentURL]) },
+                        onScheduleTimeChanged: clampScheduleTime
+                    )
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup {
+            Picker("Mode", selection: $writeEnabled) {
+                Text("Dry Run").tag(false)
+                Text("Write").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+            .disabled(isRunning)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isRunning ? Color.orange : (appController.lastRunFailed ? Color.red : Color.secondary))
+                    .frame(width: 7, height: 7)
+                Text(progressText ?? (isRunning ? "Running…" : (hasAccess ? "\(calendars.count) calendars" : "No access")))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Divider()
+            if isRunning {
+                Button("Cancel") { cancelMirror() }
+            } else {
+                Button {
+                    startMirrorNow()
+                } label: {
+                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!canRunMirrorNow)
+            }
 
-            Toggle("Write to calendars (disable for Dry-Run)", isOn: $writeEnabled)
-                .disabled(isRunning)
-
-            HStack(spacing: 10) {
+            Menu {
                 Button("Export Settings…") { exportSettings() }
                 Button("Import Settings…") { importSettings() }
+                Divider()
                 Button("Reveal Log File") {
                     NSWorkspace.shared.activateFileViewerSelecting([AppLogStore.logFileURL])
                 }
-                Spacer(minLength: 0)
-            }
-
-            Divider()
-
-            ScheduleSectionView(
-                scheduleMode: Binding(
-                    get: { scheduleMode },
-                    set: { newValue in
-                        scheduleMode = newValue
-                        scheduleWeekdaysOnly = (newValue == .weekdays)
-                    }
-                ),
-                scheduleIntervalHours: $scheduleIntervalHours,
-                scheduleHour: $scheduleHour,
-                scheduleMinute: $scheduleMinute,
-                isRunning: isRunning,
-                routesEmpty: routes.isEmpty,
-                hasInstalledSchedule: hasInstalledSchedule,
-                scheduleSummary: scheduleSummary,
-                onInstall: installSchedule,
-                onRemove: removeSchedule,
-                onRevealLaunchAgent: { NSWorkspace.shared.activateFileViewerSelecting([launchAgentURL]) },
-                onScheduleTimeChanged: clampScheduleTime
-            )
-
-            HStack(spacing: 10) {
+                Divider()
                 Button("Cleanup Placeholders") {
                     if writeEnabled {
-                        // Real delete: ask for confirmation first
                         confirmCleanup = true
                     } else {
-                        // Dry-run: run without confirmation
                         Task {
                             if routes.isEmpty {
                                 await runCleanupForCurrentSelection()
@@ -677,168 +782,38 @@ struct ContentView: View {
                     }
                 }
                 .disabled(isRunning)
-                .buttonStyle(.bordered)
-
                 Button("Refresh Calendars") {
                     reloadCalendars(forceResetStore: true)
                 }
                 .disabled(isRunning)
-                .buttonStyle(.bordered)
-
-                Spacer(minLength: 0)
+                Divider()
+                Button(hasAccess ? "Recheck Permission" : "Request Calendar Access") {
+                    requestAccess()
+                }
+                .disabled(isRunning)
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let compactLayout = proxy.size.width < 1220
-            ZStack {
-                Color(nsColor: .underPageBackgroundColor)
-                    .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("BusyMirror")
-                                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                                Text("Mirror availability across calendars")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            HStack(spacing: 8) {
-                                if hasAccess {
-                                    statusPill("\(calendars.count) calendars", systemImage: "calendar", fill: .black)
-                                } else {
-                                    statusPill("No access", systemImage: "lock.fill", fill: .red)
-                                }
-                                Button {
-                                    guard !isRunning else { return }
-                                    writeEnabled.toggle()
-                                    log("Mode: \(writeEnabled ? "WRITE" : "DRY-RUN")")
-                                } label: {
-                                    statusPill(writeEnabled ? "WRITE" : "DRY RUN", systemImage: writeEnabled ? "pencil" : "eye", fill: writeEnabled ? .red : .black)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Click to toggle write mode.")
-                                if isRunning {
-                                    statusPill("RUNNING", systemImage: "arrow.triangle.2.circlepath", fill: .orange)
-                                }
-                                if let progressText {
-                                    Text(progressText)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                if isRunning {
-                                    Button("Cancel") {
-                                        cancelMirror()
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.large)
-                                } else {
-                                    Button("Mirror Now") {
-                                        startMirrorNow()
-                                    }
-                                    .disabled(!canRunMirrorNow)
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.large)
-                                }
-                                Button(hasAccess ? "Recheck Permission" : "Request Calendar Access") {
-                                    requestAccess()
-                                }
-                                .disabled(isRunning)
-                                .buttonStyle(.bordered)
-                            }
-                        }
-
-                        if !hasAccess {
-                            panelCard(
-                                title: "Calendar Permission Needed",
-                                subtitle: "BusyMirror needs access to read and mirror your events.",
-                                symbol: "lock.fill"
-                            ) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text("Calendar access is not granted yet. Use the button above to continue.")
-                                        .foregroundStyle(.secondary)
-                                    Button("Request Calendar Access") {
-                                        requestAccess()
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                }
-                            }
-                        } else if compactLayout {
-                            panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
-                                CalendarsSectionView(
-                                    calendars: calendars,
-                                    sourceIndex: $sourceIndex,
-                                    targetSelections: $targetSelections,
-                                    targetIDs: $targetIDs,
-                                    isRunning: isRunning
-                                )
-                            }
-                            panelCard(title: "Actions & Schedule", subtitle: "Export, cleanup, and manual scheduling", symbol: "slider.horizontal.3") {
-                                optionsSection()
-                            }
-                            panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
-                                RoutesSectionView(
-                                    routes: $routes,
-                                    calendars: calendars,
-                                    isRunning: isRunning,
-                                    titlePrefix: titlePrefix,
-                                    placeholderTitle: placeholderTitle,
-                                    canAddRoute: sourceID != nil && !targetIDs.isEmpty,
-                                    onAddRoute: addRouteFromCurrentSelection
-                                )
-                            }
-                            panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
-                                LogSectionView(logText: logText)
-                            }
-                        } else {
-                            HStack(alignment: .top, spacing: 14) {
-                                VStack(spacing: 12) {
-                                    panelCard(title: "Calendars", subtitle: "Source: \(selectedSourceName)", symbol: "calendar") {
-                                        CalendarsSectionView(
-                                    calendars: calendars,
-                                    sourceIndex: $sourceIndex,
-                                    targetSelections: $targetSelections,
-                                    targetIDs: $targetIDs,
-                                    isRunning: isRunning
-                                )
-                                    }
-                                    panelCard(title: "Actions & Schedule", subtitle: "Export, cleanup, and manual scheduling", symbol: "slider.horizontal.3") {
-                                        optionsSection()
-                                    }
-                                }
-                                .frame(width: 430, alignment: .topLeading)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                                VStack(spacing: 12) {
-                                    panelCard(title: "Routes", subtitle: "\(routes.count) configured", symbol: "arrow.triangle.branch") {
-                                        RoutesSectionView(
-                                    routes: $routes,
-                                    calendars: calendars,
-                                    isRunning: isRunning,
-                                    titlePrefix: titlePrefix,
-                                    placeholderTitle: placeholderTitle,
-                                    canAddRoute: sourceID != nil && !targetIDs.isEmpty,
-                                    onAddRoute: addRouteFromCurrentSelection
-                                )
-                                    }
-                                    panelCard(title: "Activity Log", subtitle: "Latest events and dry-run output", symbol: "terminal") {
-                                        LogSectionView(logText: logText)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                        }
+        NavigationSplitView {
+            sidebarView
+        } detail: {
+            Group {
+                if !hasAccess {
+                    accessNeededView
+                } else {
+                    switch selectedSection ?? .routes {
+                    case .routes: routesDetailView
+                    case .schedule: scheduleDetailView
+                    case .log: LogSectionView(logText: $logText)
                     }
-                    .padding(18)
-                    .frame(maxWidth: 1480, alignment: .topLeading)
-                    .frame(minHeight: proxy.size.height, alignment: .topLeading)
                 }
             }
+            .navigationTitle((selectedSection ?? .routes).title)
+            .toolbar { toolbarContent }
         }
         .confirmationDialog(
             "Delete mirrored placeholders?",
@@ -894,6 +869,11 @@ struct ContentView: View {
         .onChange(of: titlePrefix) { _ in saveSettingsToDefaults() }
         .onChange(of: placeholderTitle) { _ in saveSettingsToDefaults() }
         .onChange(of: autoDeleteMissing) { _ in saveSettingsToDefaults() }
+        .onChange(of: filterByWorkHours) { _ in saveSettingsToDefaults() }
+        .onChange(of: workHoursStart) { _ in saveSettingsToDefaults() }
+        .onChange(of: workHoursEnd) { _ in saveSettingsToDefaults() }
+        .onChange(of: excludedTitleFiltersRaw) { _ in saveSettingsToDefaults() }
+        .onChange(of: excludedOrganizerFiltersRaw) { _ in saveSettingsToDefaults() }
         .onChange(of: sourceIndex) { newValue in
             // Track selected source by persistent ID and ensure it is not a target
             if newValue < calendars.count { sourceID = calendars[newValue].calendarIdentifier }
@@ -1211,7 +1191,7 @@ struct ContentView: View {
                     if granted {
                         // Reinitialize the store after permission changes to ensure sources load
                         store = EKEventStore()
-                        reloadCalendars()
+                        reloadCalendars(pruneRoutes: false)
                     } else {
                         appController.clearPendingSyncRequest()
                     }
@@ -1225,7 +1205,7 @@ struct ContentView: View {
                     if granted {
                         // Reinitialize the store after permission changes to ensure sources load
                         store = EKEventStore()
-                        reloadCalendars()
+                        reloadCalendars(pruneRoutes: false)
                     } else {
                         appController.clearPendingSyncRequest()
                     }
@@ -1236,7 +1216,7 @@ struct ContentView: View {
     }
     
     @MainActor
-    func reloadCalendars(forceResetStore: Bool = false) {
+    func reloadCalendars(forceResetStore: Bool = false, pruneRoutes: Bool = true) {
         if forceResetStore {
             // EventKit can cache stale/inactive calendars; recreate store for a hard refresh.
             // Unregister the existing EKEventStoreChanged observer first — it targets the
@@ -1246,15 +1226,25 @@ struct ContentView: View {
         }
         let fetched = store.calendars(for: .event)
         calendars = sortedCalendars(fetched)
-        let pruned = pruneStaleCalendarReferences()
+        // A freshly-created EKEventStore (right after a permission grant) can report an
+        // incomplete calendar list for a moment before remote sources (Exchange, CalDAV)
+        // finish hydrating — pruning against that snapshot wrongly concludes a route's
+        // calendar is gone and deletes it. Confirmed happening on a real install: routes
+        // dropped on the very next launch, only saved by the legacy routes.v1 fallback.
+        // requestAccess() passes pruneRoutes: false for exactly that reload; the
+        // EKEventStoreChanged-triggered reload and an explicit "Refresh Calendars" click
+        // (a warm, already-stable store) still prune as before.
+        if pruneRoutes {
+            let pruned = pruneStaleCalendarReferences()
+            if pruned.removedTargets > 0 || pruned.droppedRoutes > 0 || pruned.trimmedRoutes > 0 || pruned.removedSource {
+                log("Pruned stale calendars: source removed=\(pruned.removedSource ? "yes" : "no"), selected targets removed=\(pruned.removedTargets), routes dropped=\(pruned.droppedRoutes), routes trimmed=\(pruned.trimmedRoutes).")
+                saveSettingsToDefaults()
+            }
+        }
         // Initialize IDs on first load
         if sourceID == nil, let first = calendars.first { sourceID = first.calendarIdentifier }
         // Rebuild index-based selections from stored IDs
         rebuildSelectionsFromIDs()
-        if pruned.removedTargets > 0 || pruned.droppedRoutes > 0 || pruned.trimmedRoutes > 0 || pruned.removedSource {
-            log("Pruned stale calendars: source removed=\(pruned.removedSource ? "yes" : "no"), selected targets removed=\(pruned.removedTargets), routes dropped=\(pruned.droppedRoutes), routes trimmed=\(pruned.trimmedRoutes).")
-            saveSettingsToDefaults()
-        }
         log("Loaded \(calendars.count) calendars.")
         // Register for live calendar-store changes the first time we have access,
         // so the calendar list stays up-to-date without pressing "Refresh".
@@ -1516,6 +1506,15 @@ struct ContentView: View {
             UserDefaults.standard.set(data, forKey: settingsDefaultsKey)
         } catch {
             log("✗ Failed to save settings: \(error.localizedDescription)")
+        }
+        // Keep the legacy routes-only backup current (not just a frozen
+        // historical snapshot) so it's a real safety net: if settings.v2 ever
+        // comes back with an empty `routes` array again (the exact bug fixed
+        // by reloadCalendars(pruneRoutes:) above), recovery restores the
+        // actual current routes, not whatever they were the first time this
+        // key was ever written.
+        if !routes.isEmpty, let routesData = try? JSONEncoder().encode(routes) {
+            UserDefaults.standard.set(routesData, forKey: legacyRoutesDefaultsKey)
         }
     }
 

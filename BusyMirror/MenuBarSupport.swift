@@ -258,9 +258,14 @@ struct BusyMirrorMenuBarView: View {
             Text("BusyMirror")
                 .font(.headline)
 
-            Text(appController.isSyncing ? "Sync in progress." : appController.lastRunStatusText)
-                .font(.subheadline)
-                .foregroundStyle(appController.lastRunFailed ? .red : .secondary)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(appController.isSyncing ? Color.orange : (appController.lastRunFailed ? Color.red : Color.green))
+                    .frame(width: 7, height: 7)
+                Text(appController.isSyncing ? "Sync in progress." : appController.lastRunStatusText)
+                    .font(.subheadline)
+                    .foregroundStyle(appController.lastRunFailed ? .red : .secondary)
+            }
 
             Text(appController.autoSyncArmed ? "Auto-sync: watching for calendar changes." : "Auto-sync: not active (add a saved route to enable).")
                 .font(.caption)
@@ -268,29 +273,39 @@ struct BusyMirrorMenuBarView: View {
 
             Divider()
 
-            Button(appController.isSyncing ? "Syncing…" : "Sync Now") {
+            Button {
                 let shouldOpenWindow = !appController.isMainWindowVisible
                 appController.requestSync()
                 if shouldOpenWindow {
                     appController.openMainWindow(using: openWindow)
                 }
+            } label: {
+                Label(appController.isSyncing ? "Syncing…" : "Sync Now", systemImage: "arrow.triangle.2.circlepath")
             }
             .disabled(appController.isSyncing)
 
-            Button("Open BusyMirror") {
+            Button {
                 appController.openMainWindow(using: openWindow)
+            } label: {
+                Label("Open BusyMirror", systemImage: "macwindow")
             }
 
-            Button("Preferences…") {
+            Button {
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()
+            } label: {
+                Label("Preferences…", systemImage: "gearshape")
             }
+            .keyboardShortcut(",", modifiers: .command)
 
             Divider()
 
-            Button("Quit BusyMirror") {
+            Button {
                 NSApp.terminate(nil)
+            } label: {
+                Label("Quit BusyMirror", systemImage: "power")
             }
+            .keyboardShortcut("q", modifiers: .command)
         }
         .padding(12)
         .frame(width: 240, alignment: .leading)

@@ -2,6 +2,19 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.9.0] - 2026-08-27
+
+### Added
+- **Sidebar navigation redesign.** Main window is now a `NavigationSplitView`: a sidebar (Routes / Schedule / Activity Log, with a route-count badge) replaces the old 2×2 grid of panel cards. Primary actions (Dry Run/Write, sync status, Sync Now) moved to the window toolbar; Export/Import/Reveal Log/Cleanup Placeholders/Refresh Calendars/Recheck Permission moved into a toolbar overflow menu.
+- **Routes** are now a real collapsed-by-default list — click a row to expand its editor (Private, Copy description, Sync reminders, Mirror all-day, merge gap, overlap, Remove) instead of every route always showing every field. The manual source/target picker lives in a collapsible "Manual Selection" section above the list.
+- **Schedule** view leads with live auto-sync status (armed/watching, last sync) instead of a bare `launchd` form; the manual fixed-time schedule is still there, demoted to an explicitly optional section underneath — matches what it actually became once 1.7.0 shipped event-driven sync.
+- **Activity Log** is now readable rows (status icon + text) instead of a monospaced text dump, with a search filter and a Clear button for the in-app view (the persistent file log on disk is untouched).
+- Menu bar dropdown got icons on every item and real ⌘,/⌘Q keyboard shortcuts on Preferences/Quit.
+- Design explored first as a mockup (light+dark) before any SwiftUI changes; direction confirmed before implementing.
+
+### Fixed
+- **Routes silently dropped on most launches, masked by a legacy fallback.** `reloadCalendars()` pruned routes referencing calendars not in the current EventKit fetch — but the fetch immediately following a permission grant (a freshly-created `EKEventStore`) can under-report calendars for a moment, especially remote accounts (Exchange/CalDAV), before they finish loading. Every affected launch wrongly deleted real routes, and only kept working because of a legacy `routes.v1` backup key kept rescuing them — a backup that itself was frozen at whatever it held the first time it was ever written, since nothing updated it afterward. Any real route edit made in a session that hit this bug would have been silently lost on the next launch. Fixed by skipping the prune specifically on the post-permission-grant reload (`reloadCalendars(pruneRoutes: false)`) — the EKEventStoreChanged-triggered reload and an explicit "Refresh Calendars" click, both against an already-warm store, still prune as before — and by keeping the `routes.v1` backup itself current on every save instead of frozen. Confirmed via `--status`/reading the UserDefaults plist directly on a real install: routes stopped disappearing across repeated launches. ([ContentView.swift](BusyMirror/ContentView.swift))
+
 ## [1.8.3] - 2026-08-27
 
 ### Fixed
