@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.9.2] - 2026-08-27
+
+### Fixed
+- **"Sync Now" toolbar button showed only its icon**, no text — confirmed via screenshot: the Dry Run/Write toggle and toolbar layout were actually fine (1.9.1's fix worked, sidebar clicks too), but the circular-arrows icon next to it was unlabeled, easy to miss as "Sync Now" entirely. Forced `.labelStyle(.titleAndIcon)` so the text always shows regardless of toolbar width. ([ContentView.swift](BusyMirror/ContentView.swift))
+
 ## [1.9.1] - 2026-08-27
 
 ### Fixed

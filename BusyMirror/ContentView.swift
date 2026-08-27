@@ -755,6 +755,7 @@ struct ContentView: View {
                     startMirrorNow()
                 } label: {
                     Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                        .labelStyle(.titleAndIcon)
                 }
                 .disabled(!canRunMirrorNow)
             }
