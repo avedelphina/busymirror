@@ -2,6 +2,14 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.9.1] - 2026-08-27
+
+### Fixed
+- **Sidebar not clickable.** `sidebarView` used `List(SidebarSection.allCases, selection:)` (the data-driven initializer), which ties selection to `Identifiable`'s `id` — a `String` for `SidebarSection` — while the binding was typed `SidebarSection?`. Rebuilt with the standard `List(selection:) { ForEach(...) { ... .tag(section) } }` pattern, which binds selection directly to the (`Hashable`) section value with no ambiguity. Also added `.listStyle(.sidebar)`, the standard modifier for a `NavigationSplitView` sidebar (vibrancy, selection color) that was missing.
+- **"Write to calendars" hard to find.** It was still there as the Dry Run/Write segmented control in the toolbar, but likely lost to toolbar overflow alongside a status readout, Sync Now, and the overflow menu all crammed into one `ToolbarItemGroup`. Moved the calendar-count/status text out of the toolbar entirely into `.navigationSubtitle` (always visible, native, never subject to overflow), leaving the toolbar to just Dry Run/Write, Sync Now/Cancel, and the overflow menu.
+
+Not independently confirmed by clicking through the UI (no GUI automation available in this environment) — the `List(selection:)` fix follows SwiftUI's standard, unambiguous sidebar-selection pattern.
+
 ## [1.9.0] - 2026-08-27
 
 ### Added

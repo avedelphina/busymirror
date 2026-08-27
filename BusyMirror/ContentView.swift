@@ -568,22 +568,25 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sidebarView: some View {
-        List(SidebarSection.allCases, selection: $selectedSection) { section in
-            Label {
-                HStack {
-                    Text(section.title)
-                    if section == .routes && !routes.isEmpty {
-                        Spacer()
-                        Text("\(routes.count)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        List(selection: $selectedSection) {
+            ForEach(SidebarSection.allCases) { section in
+                Label {
+                    HStack {
+                        Text(section.title)
+                        if section == .routes && !routes.isEmpty {
+                            Spacer()
+                            Text("\(routes.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                } icon: {
+                    Image(systemName: section.icon)
                 }
-            } icon: {
-                Image(systemName: section.icon)
+                .tag(section)
             }
-            .tag(section as SidebarSection?)
         }
+        .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 200)
     }
 
@@ -727,6 +730,12 @@ struct ContentView: View {
         }
     }
 
+    private var statusSubtitle: String {
+        if let progressText { return progressText }
+        if isRunning { return "Running…" }
+        return hasAccess ? "\(calendars.count) calendars" : "No calendar access"
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup {
@@ -737,15 +746,7 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .frame(width: 150)
             .disabled(isRunning)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isRunning ? Color.orange : (appController.lastRunFailed ? Color.red : Color.secondary))
-                    .frame(width: 7, height: 7)
-                Text(progressText ?? (isRunning ? "Running…" : (hasAccess ? "\(calendars.count) calendars" : "No access")))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            .help("Dry Run previews changes without writing. Write actually creates/updates/deletes events.")
 
             if isRunning {
                 Button("Cancel") { cancelMirror() }
@@ -813,6 +814,7 @@ struct ContentView: View {
                 }
             }
             .navigationTitle((selectedSection ?? .routes).title)
+            .navigationSubtitle(statusSubtitle)
             .toolbar { toolbarContent }
         }
         .confirmationDialog(
