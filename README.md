@@ -2,7 +2,7 @@
 
 BusyMirror mirrors meetings between your calendars so your availability stays consistent across accounts/devices.
 
-On macOS, BusyMirror now runs as a menu bar app. Use the menu bar icon to sync manually or open the main window; it no longer appears in the Dock.
+On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also has a menu bar icon for quick sync/status without opening the main window.
 
 ## What it does (current)
 - Route-driven mirroring (multi-source): define Source → Targets routes and run them in one go.
@@ -13,7 +13,7 @@ On macOS, BusyMirror now runs as a menu bar app. Use the menu bar icon to sync m
 - DRY-RUN mode: see what would be created/updated/deleted without writing.
 - Activity Log in the app plus persistent file logging on disk.
 - In-app scheduling: install or remove a `launchd` LaunchAgent from the `Scheduled runs` section.
-- Menu bar controls: trigger `Sync Now`, open the main window, or quit without keeping a Dock icon around.
+- Menu bar controls: trigger `Sync Now`, open the main window, open Preferences, or quit.
 - Overlap modes: `allow`, `skipCovered`, `fillGaps`.
 - Merge adjacent events with a configurable gap.
 - Time window controls (days back/forward) and Work Hours filter.

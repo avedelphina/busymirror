@@ -4,9 +4,9 @@
 
 ## Project Overview
 
-**BusyMirror** is a macOS menu-bar utility that mirrors calendar events from a source calendar into one or more target calendars, creating busy-placeholder events so availability stays consistent across accounts and devices.
+**BusyMirror** is a macOS utility (standard app + menu bar extra) that mirrors calendar events from a source calendar into one or more target calendars, creating busy-placeholder events so availability stays consistent across accounts and devices.
 
-It is a single-platform macOS app written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The app runs as a menu-bar-only app (`LSUIElement`) with no Dock icon.
+It is a single-platform macOS app written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The app runs as a standard app (Dock icon, ⌘Q) and also has a `MenuBarExtra` for quick sync/status.
 
 Key capabilities:
 - Manual or route-driven multi-source mirroring
@@ -44,7 +44,7 @@ BusyMirror/
 ├── EventFilters.swift           # Work-hours, title, and organizer filters
 ├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator) + menu bar view
 ├── AppLogStore.swift            # File-backed log store with rotation (AppLogStore enum)
-├── Info.plist                   # LSUIElement, calendar usage descriptions
+├── Info.plist                   # calendar/reminders usage descriptions
 ├── BusyMirror.entitlements      # App sandbox + calendar access entitlement
 └── Assets.xcassets/             # AppIcon set and accent color
 
@@ -146,7 +146,7 @@ Scheduled runs are implemented by generating a `launchd` plist in `~/Library/Lau
 | `BusyMirror/BusyMirrorApp.swift` | App struct, window scene, menu-bar extra |
 | `BusyMirror/MenuBarSupport.swift` | `@MainActor` app controller + menu bar SwiftUI view |
 | `BusyMirror/AppLogStore.swift` | File-backed log with rotation (`~/Library/Logs/BusyMirror/`) |
-| `BusyMirror/Info.plist` | `LSUIElement`, calendar usage descriptions |
+| `BusyMirror/Info.plist` | calendar/reminders usage descriptions |
 | `BusyMirror/BusyMirror.entitlements` | Sandbox + calendar entitlement |
 | `Makefile` | Reproducible build, sign, and package targets |
 | `CHANGELOG.md` | Release notes (human-readable) |

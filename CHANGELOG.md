@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.8.2] - 2026-08-27
+
+### Changed
+- **Standard app instead of menu-bar-only.** Removed `LSUIElement` from `Info.plist`: BusyMirror now shows a Dock icon, appears in Cmd+Tab, and gets the standard app menu (Cmd+Q to quit, among others). The menu bar extra stays as a secondary quick-access point. This also fixes the practical problem it was causing: with no Dock icon and no accessible app menu, there was no reliable way to quit the app to let an update replace the bundle — you had to know the menu bar dropdown's "Quit BusyMirror" existed and use exactly that. Verified via `lsappinfo` (`type="Foreground"`, previously `UIElement`) since this app type change isn't something a screenshot would catch either.
+
 ## [1.8.1] - 2026-08-26
 
 ### Fixed

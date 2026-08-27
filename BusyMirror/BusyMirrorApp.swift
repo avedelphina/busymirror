@@ -23,12 +23,12 @@ struct BusyMirrorApp: App {
                 .environmentObject(appController)
         }
 
-        // A plain Window (not a Settings scene) — LSUIElement (accessory)
-        // apps don't get the standard app menu, so Cmd+, / the automatic
-        // "Settings…" command has no menu to live in and SettingsLink has
-        // nothing reliable to trigger. openWindow(id:) is the same mechanism
-        // that already reliably opens the main window from the menu bar, so
-        // reuse it here instead.
+        // A plain Window rather than a Settings scene: this was originally
+        // required because the app was LSUIElement (accessory) and got no
+        // standard app menu for Cmd+,/SettingsLink to hook into. Now that
+        // it's a standard app that menu exists, but openWindow(id:) already
+        // works reliably (same mechanism as the main window) so there's no
+        // reason to switch back.
         Window("Preferences", id: BusyMirrorSceneID.preferencesWindow) {
             PreferencesView()
                 .environmentObject(appController)
