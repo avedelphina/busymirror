@@ -165,6 +165,14 @@ final class BlockMathTests: XCTestCase {
         XCTAssertEqual(result.count, 2)
     }
 
+    func testTentativeAffectsEqualityAndHash() {
+        let base = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: "x", notes: nil, occurrence: d, alarmOffsets: nil)
+        var maybe = base
+        maybe.tentative = true
+        XCTAssertNotEqual(base, maybe)
+        XCTAssertNotEqual(base.hashValue, maybe.hashValue)
+    }
+
     func testUniqueBlocksByIDDifferentOccurrence() {
         let b1 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d, alarmOffsets: nil)
         let b2 = Block(start: d, end: d.addingTimeInterval(600), srcStableID: "a", label: nil, notes: nil, occurrence: d.addingTimeInterval(3600), alarmOffsets: nil)

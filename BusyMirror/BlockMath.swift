@@ -8,6 +8,8 @@ struct Block: Hashable {
     let notes: String?        // source notes (for optional copy)
     let occurrence: Date?     // occurrenceDate for recurring instances
     let alarmOffsets: [TimeInterval]?  // relative alarm offsets copied from source event
+    var tentative: Bool = false        // source "Maybe" RSVP; mirrored with a marker
+    // ponytail: lost on the merge path (mergeGapMin > 0) along with the title; only tracked in per-event mode
 
     /// Convenience factory for time-only blocks (used internally for occupancy tracking).
     static func span(start: Date, end: Date) -> Block {
@@ -22,7 +24,8 @@ struct Block: Hashable {
         lhs.srcStableID == rhs.srcStableID &&
         lhs.label == rhs.label &&
         lhs.notes == rhs.notes &&
-        lhs.occurrence == rhs.occurrence
+        lhs.occurrence == rhs.occurrence &&
+        lhs.tentative == rhs.tentative
     }
 
     func hash(into hasher: inout Hasher) {
@@ -32,6 +35,7 @@ struct Block: Hashable {
         hasher.combine(label)
         hasher.combine(notes)
         hasher.combine(occurrence)
+        hasher.combine(tentative)
     }
 }
 

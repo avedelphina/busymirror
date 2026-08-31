@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.10.0] - 2026-08-31
+
+### Added
+- **"Maybe" events are now mirrored.** Previously, when "Mirror accepted events only" was on, events you'd RSVP'd tentative to were dropped entirely. They're now mirrored with a `Maybe: ` marker in the title (after the normal prefix, e.g. `🪞 Maybe: Standup`) and written with tentative availability so Calendar shows them hatched. Applies regardless of the accepted-only setting — any tentative RSVP gets the marker. A flip between accepted and tentative re-syncs the title. Not carried on the merge path (`mergeGapMin > 0`), which already discards per-event titles. ([MirrorEngine.swift](BusyMirror/MirrorEngine.swift), [BlockMath.swift](BusyMirror/BlockMath.swift))
+
 ## [1.9.2] - 2026-08-27
 
 ### Fixed

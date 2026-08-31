@@ -145,10 +145,12 @@ final class MirrorEngine {
         var skippedStatus = 0
         for ev in srcEvents {
             if Task.isCancelled { break }
+            let myStatus = ev.attendees?.first(where: { $0.isCurrentUser })?.participantStatus
+            let isTentative = (myStatus == .tentative)
             if config.mirrorAcceptedOnly, ev.hasAttendees {
-                let attendees = ev.attendees ?? []
-                if let me = attendees.first(where: { $0.isCurrentUser }) {
-                    if me.participantStatus != .accepted {
+                if let me = ev.attendees?.first(where: { $0.isCurrentUser }) {
+                    // "Maybe" replies still get mirrored, just marked (see displayTitle below)
+                    if me.participantStatus != .accepted && me.participantStatus != .tentative {
                         skippedStatus += 1
                         continue
                     }
@@ -178,7 +180,7 @@ final class MirrorEngine {
             guard let s = ev.startDate, let e = ev.endDate, e > s else { continue }
             guard ev.calendar.calendarIdentifier == srcCal.calendarIdentifier else { continue }
             let srcID = stableSourceIdentifier(for: ev)
-            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate, alarmOffsets: alarmOffsets(for: ev)))
+            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate, alarmOffsets: alarmOffsets(for: ev), tentative: isTentative))
         }
         if skippedMirrors > 0 {
             log("- SKIP mirrored-on-source: \(skippedMirrors) instance(s)")
@@ -379,7 +381,8 @@ final class MirrorEngine {
                 let baseSourceTitle = stripPrefix(blk.label, prefix: config.titlePrefix)
                 let effectiveTitle = config.hideDetails ? config.placeholderTitle : (baseSourceTitle.isEmpty ? config.placeholderTitle : baseSourceTitle)
                 let titleSuffix = config.hideDetails ? "" : (baseSourceTitle.isEmpty ? "" : " — \(baseSourceTitle)")
-                let displayTitle = (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + effectiveTitle
+                let maybeMark = blk.tentative ? "Maybe: " : ""
+                let displayTitle = (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + maybeMark + effectiveTitle
                 let notes = desiredNotes(for: blk)
                 let desiredURL = buildMirrorURL(
                     targetCalID: tgt.calendarIdentifier,
@@ -409,6 +412,7 @@ final class MirrorEngine {
                         return
                     }
                     existing.title = displayTitle
+                    existing.availability = blk.tentative ? .tentative : .busy
                     existing.startDate = blk.start
                     existing.endDate = blk.end
                     existing.isAllDay = false
@@ -467,7 +471,7 @@ final class MirrorEngine {
                 newEv.notes = notes
                 newEv.url = desiredURL
                 newEv.alarms = desiredAlarms(for: blk)
-                newEv.availability = .busy
+                newEv.availability = blk.tentative ? .tentative : .busy
                 do {
                     try store.save(newEv, span: .thisEvent, commit: true)
                     created += 1
