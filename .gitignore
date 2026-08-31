@@ -22,3 +22,6 @@ ExportOptions.plist
 *.zip
 *.sha256
 dist/
+
+# Claude Code local overrides
+.claude/settings.local.json
