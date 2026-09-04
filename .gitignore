@@ -4,6 +4,7 @@ xcuserdata/
 DerivedData/
 build/
 *.xcuserstate
+*.xcodeproj/project.xcworkspace/xcshareddata/
 
 # SwiftPM
 .build/
