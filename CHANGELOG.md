@@ -2,6 +2,11 @@
 
 All notable changes to BusyMirror will be documented in this file.
 
+## [1.10.1] - 2026-09-04
+
+### Changed
+- **Release builds are now signed with a Developer ID certificate and notarized by Apple**, replacing the previous ad-hoc signing. `make package` builds, signs, submits to Apple's notary service, staples the ticket, and zips in one pipeline. No app behavior changes — Gatekeeper no longer requires a right-click-Open workaround on first launch.
+
 ## [1.10.0] - 2026-08-31
 
 ### Added

@@ -410,7 +410,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEVELOPMENT_TEAM = P32JC2N6Y9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -422,7 +422,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-                MARKETING_VERSION = 1.10.0;
+                MARKETING_VERSION = 1.10.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirror;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -441,7 +441,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 31;
+				CURRENT_PROJECT_VERSION = 32;
 				DEVELOPMENT_TEAM = P32JC2N6Y9;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -454,7 +454,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-                MARKETING_VERSION = 1.10.0;
+                MARKETING_VERSION = 1.10.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirror;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
