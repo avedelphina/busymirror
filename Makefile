@@ -8,7 +8,13 @@ DEST := platform=macOS
 # Extract marketing version from project settings
 VERSION := $(shell sed -n 's/.*MARKETING_VERSION = \([0-9.]*\);.*/\1/p' $(PROJECT)/project.pbxproj | head -n1)
 
-.PHONY: all clean build-debug build-release sign-app open app package
+# Developer ID signing identity (must be in the login keychain: security find-identity -v -p codesigning)
+SIGN_IDENTITY ?= Developer ID Application: TOMÁŠ KRÁČMAR (P32JC2N6Y9)
+# notarytool credential profile, created once via:
+#   xcrun notarytool store-credentials hermes-notary --apple-id <apple-id> --team-id P32JC2N6Y9 --password <app-specific-password>
+NOTARY_PROFILE ?= hermes-notary
+
+.PHONY: all clean build-debug build-release sign-app notarize open app package
 
 all: build-release
 
@@ -33,14 +39,28 @@ open: app
 APP_PATH := $(DERIVED)/Build/Products/Release/BusyMirror.app
 SIGNED_APP_PATH := build/ReleaseSigned/BusyMirror.app
 
+# codesign refuses to sign a bundle carrying Finder/resource-fork xattrs, and
+# this repo lives under iCloud Drive, which re-tags every freshly written file
+# with com.apple.FinderInfo before codesign gets to it — happens regardless of
+# copy tool. So signing/notarizing/stapling happens in a local /tmp scratch
+# dir (never iCloud-synced) and only the finished, already-signed app is
+# copied back into the repo.
+SCRATCH := /tmp/busymirror-sign
+SCRATCH_APP := $(SCRATCH)/BusyMirror.app
+
 sign-app: build-release
-	@echo "Preparing signed release app…"
+	@echo "Signing release app with Developer ID…"
+	@rm -rf "$(SCRATCH)"
+	@mkdir -p "$(SCRATCH)"
+	@ditto --norsrc "$(APP_PATH)" "$(SCRATCH_APP)"
+	@xattr -rc "$(SCRATCH_APP)"
+	@codesign --force --options runtime --timestamp \
+		--entitlements BusyMirror/BusyMirror.entitlements \
+		--sign "$(SIGN_IDENTITY)" "$(SCRATCH_APP)"
+	@codesign --verify --deep --strict --verbose=2 "$(SCRATCH_APP)"
 	@rm -rf "$(SIGNED_APP_PATH)"
 	@mkdir -p "$(dir $(SIGNED_APP_PATH))"
-	@ditto "$(APP_PATH)" "$(SIGNED_APP_PATH)"
-	@xattr -rc "$(SIGNED_APP_PATH)"
-	@codesign --force --deep --sign - "$(SIGNED_APP_PATH)"
-	@codesign --verify --deep --strict --verbose=2 "$(SIGNED_APP_PATH)"
+	@ditto "$(SCRATCH_APP)" "$(SIGNED_APP_PATH)"
 
 app: sign-app
 	@# Ensure the app exists
@@ -48,8 +68,21 @@ app: sign-app
 	@echo "Version: $(VERSION)"
 	@echo "OK"
 
-package: app
+# Submit to Apple notary service and staple the ticket onto the app.
+notarize: sign-app
+	@echo "Submitting for notarization (this can take a few minutes)…"
+	@ditto --norsrc -c -k --keepParent "$(SCRATCH_APP)" "$(SCRATCH)/notarize-submission.zip"
+	@xcrun notarytool submit "$(SCRATCH)/notarize-submission.zip" --keychain-profile "$(NOTARY_PROFILE)" --wait
+	@xcrun stapler staple "$(SCRATCH_APP)"
+	@xcrun stapler validate "$(SCRATCH_APP)"
+	@spctl --assess --type execute --verbose=2 "$(SCRATCH_APP)"
+	@rm -rf "$(SIGNED_APP_PATH)"
+	@mkdir -p "$(dir $(SIGNED_APP_PATH))"
+	@ditto "$(SCRATCH_APP)" "$(SIGNED_APP_PATH)"
+
+package: notarize
 	@echo "Packaging BusyMirror $(VERSION)…"
-	@ditto --norsrc -c -k --keepParent "$(SIGNED_APP_PATH)" "BusyMirror-$(VERSION)-macOS.zip"
+	@ditto --norsrc -c -k --keepParent "$(SCRATCH_APP)" "BusyMirror-$(VERSION)-macOS.zip"
 	@shasum -a 256 "BusyMirror-$(VERSION)-macOS.zip" | awk '{print $$1}' > "BusyMirror-$(VERSION)-macOS.zip.sha256"
+	@rm -rf "$(SCRATCH)"
 	@echo "Created BusyMirror-$(VERSION)-macOS.zip and .sha256"
