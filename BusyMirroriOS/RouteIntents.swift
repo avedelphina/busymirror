@@ -70,6 +70,18 @@ struct RunAllRoutesIntent: AppIntent {
     }
 }
 
+struct GetStatusIntent: AppIntent {
+    static var title: LocalizedStringResource = "BusyMirror Status"
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let store = RouteStore.shared
+        let count = store.loadRoutes().count
+        let when = store.lastSyncDate?.formatted(.relative(presentation: .named)) ?? "never"
+        return .result(dialog: "\(count) route(s) saved. Last synced \(when).")
+    }
+}
+
 struct BusyMirrorShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -83,6 +95,12 @@ struct BusyMirrorShortcuts: AppShortcutsProvider {
             phrases: ["Run a \(.applicationName) route"],
             shortTitle: "Run Route",
             systemImageName: "arrow.right.circle"
+        )
+        AppShortcut(
+            intent: GetStatusIntent(),
+            phrases: ["\(.applicationName) status"],
+            shortTitle: "BusyMirror Status",
+            systemImageName: "info.circle"
         )
     }
 }
