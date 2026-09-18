@@ -23,6 +23,8 @@ struct ContentView: View {
     @State private var runningRouteID: Route.ID?
     @State private var logLines: [String] = []
     @State private var lastSyncDate: Date?
+    @State private var confirmCleanup = false
+    @State private var isCleaningUp = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +72,24 @@ struct ContentView: View {
                     Button { sheet = .add } label: { Image(systemName: "plus") }
                         .disabled(calendars.isEmpty)
                 }
+                ToolbarItem(placement: .secondaryAction) {
+                    Button {
+                        confirmCleanup = true
+                    } label: {
+                        Label("Clean Up Placeholders", systemImage: "trash")
+                    }
+                    .disabled(routes.isEmpty || isCleaningUp)
+                }
+            }
+            .confirmationDialog(
+                "Delete mirrored placeholders?",
+                isPresented: $confirmCleanup,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Now", role: .destructive) { Task { await cleanupAll() } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Removes events identified as mirrored placeholders (by title prefix) within the sync window from every route's target calendars.")
             }
             .sheet(item: $sheet) { mode in
                 switch mode {
@@ -95,14 +115,22 @@ struct ContentView: View {
 
     private func routeRow(_ route: Route) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(calendars.first(where: { $0.calendarIdentifier == route.sourceID })?.title ?? "Unknown")
-                    .font(.subheadline)
-                Text("→ " + route.targetIDs.compactMap { id in
-                    calendars.first(where: { $0.calendarIdentifier == id })?.title
-                }.joined(separator: ", "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                if let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
+                    calChip(source).font(.subheadline)
+                } else {
+                    Text("Unknown source").font(.subheadline)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                    ForEach(route.targetIDs.sorted(), id: \.self) { id in
+                        if let target = calendars.first(where: { $0.calendarIdentifier == id }) {
+                            calChip(target)
+                        }
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
             if runningRouteID == route.id {
@@ -132,6 +160,12 @@ struct ContentView: View {
         defer { runningRouteID = nil }
         logLines = await routeStore.run(route: route, calendars: calendars)
         lastSyncDate = routeStore.lastSyncDate
+    }
+
+    private func cleanupAll() async {
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+        logLines = await routeStore.cleanupAll()
     }
 }
 
@@ -171,20 +205,22 @@ private struct RouteFormView: View {
                     Picker("Source calendar", selection: $sourceID) {
                         Text("None").tag(String?.none)
                         ForEach(calendars, id: \.calendarIdentifier) { cal in
-                            Text(cal.title).tag(Optional(cal.calendarIdentifier))
+                            calChip(cal).tag(Optional(cal.calendarIdentifier))
                         }
                     }
                 }
                 Section("Targets") {
                     ForEach(calendars, id: \.calendarIdentifier) { cal in
                         if cal.calendarIdentifier != sourceID {
-                            Toggle(cal.title, isOn: Binding(
+                            Toggle(isOn: Binding(
                                 get: { targetIDs.contains(cal.calendarIdentifier) },
                                 set: { isOn in
                                     if isOn { targetIDs.insert(cal.calendarIdentifier) }
                                     else { targetIDs.remove(cal.calendarIdentifier) }
                                 }
-                            ))
+                            )) {
+                                calChip(cal)
+                            }
                         }
                     }
                 }

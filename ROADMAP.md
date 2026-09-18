@@ -50,6 +50,8 @@
 - `GetStatusIntent` added — Shortcuts can now ask for route count + last-sync time, not just trigger a run.
 - Verified working end-to-end on a physical device (route add + sync engine confirmed live, not just build-clean).
 - Route add/edit form now exposes the full per-route option set, matching the Mac app's `RoutesSectionView` wording: Private, Copy description (disabled when Private is on), Sync reminders, Mirror all-day events, Merge gap (hours, stepper), Overlap mode (allow/skipCovered/fillGaps). Previously these were fixed defaults.
+- Calendars with duplicate names now distinguishable: source/target pickers and route rows use `calChip`/`calLabel` (already in the shared file set, `CalendarDisplay.swift`/`MirrorUtils.swift` — just wasn't used on iOS yet) — colored dot plus "Title — Account" when the account disambiguates it.
+- Cleanup Placeholders added, matching the Mac app's toolbar action: a destructive-confirmation dialog, then `RouteStore.cleanupAll()` runs `MirrorEngine.runCleanup` per saved route's target calendars (deletes anything identified as a mirrored placeholder by title prefix within the sync window, independent of whether its source event still exists — same "safe bulk wipe" semantics as Mac).
 - Still missing: App Store submission prep (Apple Developer/App Store Connect setup, icons, screenshots, privacy policy hosting, review notes — needs account access and product decisions, not just code).
 - Verified: iOS target builds clean (`xcodebuild -target BusyMirroriOS -sdk iphoneos`), Mac target still builds and all 45 existing tests still pass after the `OverlapMode` move.
 

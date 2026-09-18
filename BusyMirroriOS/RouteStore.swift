@@ -10,6 +10,8 @@ final class RouteStore {
 
     private let routesDefaultsKey = "routes.v1"
     private let lastSyncDefaultsKey = "lastSyncDate.v1"
+    private let titlePrefix = "🪞 "
+    private let placeholderTitle = "Busy"
     let eventStore = EKEventStore()
 
     private init() {}
@@ -53,8 +55,8 @@ final class RouteStore {
             copyDescription: route.copyNotes,
             mirrorAllDay: route.allDay,
             overlapMode: route.overlap,
-            titlePrefix: "🪞 ",
-            placeholderTitle: "Busy",
+            titlePrefix: titlePrefix,
+            placeholderTitle: placeholderTitle,
             filterByWorkHours: false,
             workHoursStart: 9,
             workHoursEnd: 17,
@@ -83,5 +85,36 @@ final class RouteStore {
         for route in loadRoutes() {
             await run(route: route, calendars: cals)
         }
+    }
+
+    @discardableResult
+    func cleanupPlaceholders(route: Route, calendars: [EKCalendar]) async -> [String] {
+        guard let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) else { return [] }
+        let targets = calendars.filter { route.targetIDs.contains($0.calendarIdentifier) }
+        guard !targets.isEmpty else { return [] }
+
+        var lines: [String] = []
+        let engine = MirrorEngine(log: { lines.append($0) })
+        await engine.runCleanup(
+            store: eventStore,
+            daysBack: 1,
+            daysForward: 14,
+            sourceCalendar: source,
+            targetCalendars: targets,
+            titlePrefix: titlePrefix,
+            placeholderTitle: placeholderTitle,
+            writeEnabled: true
+        )
+        return lines
+    }
+
+    @discardableResult
+    func cleanupAll() async -> [String] {
+        let cals = calendars()
+        var lines: [String] = []
+        for route in loadRoutes() {
+            lines += await cleanupPlaceholders(route: route, calendars: cals)
+        }
+        return lines
     }
 }
