@@ -1,0 +1,9 @@
+{
+  "id" : "82e3d470-45ac-44c4-91e8-8ab6e70ee237",
+  "targets" : [
+    {
+      "id" : "979e830d-2b78-44b8-9597-2218a19ff6b6",
+      "name" : "BusyMirroriOS"
+    }
+  ]
+}

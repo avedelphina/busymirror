@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var confirmCleanup = false
     @State private var isCleaningUp = false
     @State private var showingSettings = false
+    @State private var isSyncingAll = false
 
     var body: some View {
         NavigationStack {
@@ -72,6 +73,18 @@ struct ContentView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button { sheet = .add } label: { Image(systemName: "plus") }
                         .disabled(calendars.isEmpty)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await syncAll() }
+                    } label: {
+                        if isSyncingAll {
+                            ProgressView()
+                        } else {
+                            Label("Sync All", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .disabled(routes.isEmpty || isSyncingAll || runningRouteID != nil)
                 }
                 ToolbarItem(placement: .secondaryAction) {
                     Button {
@@ -149,6 +162,7 @@ struct ContentView: View {
             } else {
                 Button("Run") { Task { await run(route) } }
                     .buttonStyle(.bordered)
+                    .disabled(isSyncingAll)
             }
             Menu {
                 Button { sheet = .edit(index: index, route: route) } label: {
@@ -183,6 +197,13 @@ struct ContentView: View {
         runningRouteID = route.id
         defer { runningRouteID = nil }
         logLines = await routeStore.run(route: route, calendars: calendars)
+        lastSyncDate = routeStore.lastSyncDate
+    }
+
+    private func syncAll() async {
+        isSyncingAll = true
+        defer { isSyncingAll = false }
+        logLines = await routeStore.runAll()
         lastSyncDate = routeStore.lastSyncDate
     }
 

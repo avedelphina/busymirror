@@ -100,11 +100,14 @@ final class RouteStore {
         return lines
     }
 
-    func runAll() async {
+    @discardableResult
+    func runAll() async -> [String] {
         let cals = calendars()
+        var lines: [String] = []
         for route in loadRoutes() {
-            await run(route: route, calendars: cals)
+            lines += await run(route: route, calendars: cals)
         }
+        return lines
     }
 
     @discardableResult
