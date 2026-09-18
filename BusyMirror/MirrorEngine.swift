@@ -386,7 +386,10 @@ final class MirrorEngine {
                 // Chained routes: an already-mirrored source event's title already carries its
                 // own upstream prefix, which we don't know how to strip (it isn't ours) — so
                 // re-prefixing here would stack ("B: A: Meeting"). Pass it through untouched instead.
-                let passThrough = config.mirrorMirroredEvents && config.passThroughMirroredTitles && blk.isMirrorSource
+                // This route's own Privacy always wins, though: hideDetails forces the normal
+                // prefix+placeholder path regardless, so a Private route can never leak an
+                // upstream title just because pass-through is enabled.
+                let passThrough = config.mirrorMirroredEvents && config.passThroughMirroredTitles && blk.isMirrorSource && !config.hideDetails
                 let displayTitle = passThrough
                     ? (blk.label ?? config.placeholderTitle)
                     : (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + maybeMark + effectiveTitle
