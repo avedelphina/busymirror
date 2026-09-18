@@ -416,7 +416,8 @@ struct ContentView: View {
                 mirrorAcceptedOnly: mirrorAcceptedOnly,
                 autoDeleteMissing: autoDeleteMissing,
                 writeEnabled: writeEnabled,
-                syncReminders: r.syncReminders
+                syncReminders: r.syncReminders,
+                mirrorMirroredEvents: r.mirrorMirroredEvents
             )
             let srcCal = calendars[sIdx]
             let targets = calendars.filter { validTargets.contains($0.calendarIdentifier) && $0.calendarIdentifier != srcCal.calendarIdentifier }
@@ -461,7 +462,8 @@ struct ContentView: View {
             mirrorAcceptedOnly: mirrorAcceptedOnly,
             autoDeleteMissing: autoDeleteMissing,
             writeEnabled: writeEnabled,
-            syncReminders: syncReminders
+            syncReminders: syncReminders,
+            mirrorMirroredEvents: false
         )
     }
 

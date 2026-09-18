@@ -17,9 +17,10 @@ struct Route: Identifiable, Hashable, Codable {
     var overlap: OverlapMode       // per-route overlap behavior
     var allDay: Bool               // per-route mirror all-day
     var titlePrefix: String?       // per-route prefix override; nil = use the app's global prefix
-    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix }
+    var mirrorMirroredEvents: Bool // if true, don't skip source events that are themselves mirrors (chained mirroring)
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix, mirrorMirroredEvents }
 
-    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil) {
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil, mirrorMirroredEvents: Bool = false) {
         self.sourceID = sourceID
         self.targetIDs = targetIDs
         self.privacy = privacy
@@ -29,6 +30,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.overlap = overlap
         self.allDay = allDay
         self.titlePrefix = titlePrefix
+        self.mirrorMirroredEvents = mirrorMirroredEvents
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +44,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.overlap = try c.decode(OverlapMode.self, forKey: .overlap)
         self.allDay = try c.decode(Bool.self, forKey: .allDay)
         self.titlePrefix = try c.decodeIfPresent(String.self, forKey: .titlePrefix)
+        self.mirrorMirroredEvents = try c.decodeIfPresent(Bool.self, forKey: .mirrorMirroredEvents) ?? false
     }
 }
 
@@ -64,4 +67,5 @@ struct MirrorConfig {
     let autoDeleteMissing: Bool
     let writeEnabled: Bool
     let syncReminders: Bool
+    let mirrorMirroredEvents: Bool
 }

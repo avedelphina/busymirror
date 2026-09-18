@@ -300,6 +300,7 @@ private struct RouteFormView: View {
     @State private var mergeGapHours: Int
     @State private var overlap: OverlapMode
     @State private var titlePrefixText: String
+    @State private var mirrorMirroredEvents: Bool
 
     init(calendars: [EKCalendar], existing: Route?, globalPrefix: String, calendarsWithMirrors: Set<String>, onSave: @escaping (Route) -> Void) {
         self.calendars = calendars
@@ -316,6 +317,7 @@ private struct RouteFormView: View {
         _mergeGapHours = State(initialValue: existing?.mergeGapHours ?? 0)
         _overlap = State(initialValue: existing?.overlap ?? .allow)
         _titlePrefixText = State(initialValue: existing?.titlePrefix ?? "")
+        _mirrorMirroredEvents = State(initialValue: existing?.mirrorMirroredEvents ?? false)
     }
 
     var body: some View {
@@ -363,6 +365,11 @@ private struct RouteFormView: View {
                     Text("Leave blank to use the global mirror prefix (\(globalPrefix)) set in Settings.")
                 }
                 Section {
+                    Toggle("Mirror already-mirrored events", isOn: $mirrorMirroredEvents)
+                } footer: {
+                    Text("Off (default): source events that are themselves mirrors (from any route, any device) are skipped, preventing re-mirroring. Turn on only for a deliberate chain (A → B → C) — enabling it on a route that loops back to its own target will duplicate events on every run.")
+                }
+                Section {
                     Toggle("Private", isOn: $privacy)
                     Toggle("Copy description", isOn: $copyNotes)
                         .disabled(privacy)
@@ -403,7 +410,8 @@ private struct RouteFormView: View {
                             mergeGapHours: mergeGapHours,
                             overlap: overlap,
                             allDay: allDay,
-                            titlePrefix: titlePrefixText.isEmpty ? nil : titlePrefixText
+                            titlePrefix: titlePrefixText.isEmpty ? nil : titlePrefixText,
+                            mirrorMirroredEvents: mirrorMirroredEvents
                         ))
                         dismiss()
                     }

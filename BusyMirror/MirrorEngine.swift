@@ -173,7 +173,7 @@ final class MirrorEngine {
                 continue
             }
             if !config.mirrorAllDay && ev.isAllDay { continue }
-            if isMirrorEvent(ev, prefix: config.titlePrefix, placeholder: config.placeholderTitle) {
+            if !config.mirrorMirroredEvents && isMirrorEvent(ev, prefix: config.titlePrefix, placeholder: config.placeholderTitle) {
                 skippedMirrors += 1
                 continue
             }
