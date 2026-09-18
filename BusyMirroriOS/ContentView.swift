@@ -48,6 +48,9 @@ struct ContentView: View {
                     }
                     ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
                         routeRow(route, index: index)
+                            .swipeActions(edge: .leading) {
+                                Button("Edit") { sheet = .edit(index: index, route: route) }.tint(.blue)
+                            }
                     }
                     .onDelete { indexSet in
                         routes.remove(atOffsets: indexSet)
