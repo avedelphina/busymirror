@@ -127,6 +127,10 @@ Built products:
 - Unsigned release: `build/DerivedData/Build/Products/Release/BusyMirror.app`
 - Signed + notarized: zipped as `BusyMirror-<version>-macOS.zip` at the repo root
 
+### CI (macOS releases)
+
+`.github/workflows/release.yml` triggers on pushing a `v*` tag: runs the unit test suite, then reuses this same `make package` (with `SIGN_IDENTITY`/`NOTARY_PROFILE` overridden for the ephemeral CI keychain) so the CI build path matches the local one exactly. Signs by certificate SHA-1, not common name — `codesign` can fail to match `Developer ID Application: TOMÁŠ KRÁČMAR` by string on some locales/encodings (an NFC/NFD Unicode normalization mismatch, hit for real running this by hand), so the workflow resolves the identity hash after import instead. Needs 5 repo secrets (`MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `AC_API_KEY_P8_BASE64`) to actually notarize — without them it'll fail at signing/notarization, which is expected until they're added in repo Settings → Secrets and variables → Actions. Creates a GitHub Release with the zip attached on success. iOS isn't in this pipeline — TestFlight distribution is manual via Xcode Organizer.
+
 ### Xcode
 
 macOS: open `BusyMirror.xcodeproj`, scheme **BusyMirror** → **My Mac**, **Product → Build** (or **Archive** for distribution).
