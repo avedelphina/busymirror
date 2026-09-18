@@ -406,7 +406,7 @@ private struct RouteFormView: View {
                     }
                 } footer: {
                     Text(mirrorMirroredEvents
-                        ? "Off (default): source events that are themselves mirrors are skipped, preventing re-mirroring. \"Copy chained titles as-is\" skips this route's own prefix and privacy handling for those events — use it so an upstream route's prefix doesn't stack with this one's (e.g. \"B: A: Meeting\"). Enabling either on a route that loops back to its own target will duplicate events on every run."
+                        ? "Off (default): source events that are themselves mirrors are skipped, preventing re-mirroring. \"Copy chained titles as-is\" avoids stacking this route's prefix onto an upstream one (e.g. \"B: A: Meeting\") — with Privacy off, the upstream title is kept verbatim; with Privacy on, this route's own placeholder is used but the upstream prefix is preserved (e.g. \"WORK1: Busy\" instead of this route's own prefix), so different sources stay distinguishable even behind a placeholder. Enabling either on a route that loops back to its own target will duplicate events on every run."
                         : "Off (default): source events that are themselves mirrors (from any route, any device) are skipped, preventing re-mirroring. Turn on only for a deliberate chain (A → B → C) — enabling it on a route that loops back to its own target will duplicate events on every run.")
                 }
                 Section {

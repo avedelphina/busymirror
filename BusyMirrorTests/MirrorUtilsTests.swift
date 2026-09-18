@@ -21,6 +21,26 @@ final class MirrorUtilsTests: XCTestCase {
         XCTAssertEqual(stripPrefix(nil, prefix: "🪞 "), "")
     }
 
+    // MARK: - extractMirrorPrefix
+
+    func testExtractMirrorPrefixFound() {
+        let title = "WORK1: " + mirrorTitleMarker + "Meeting"
+        XCTAssertEqual(extractMirrorPrefix(from: title), "WORK1: ")
+    }
+
+    func testExtractMirrorPrefixEmptyUpstreamPrefix() {
+        let title = mirrorTitleMarker + "Busy"
+        XCTAssertEqual(extractMirrorPrefix(from: title), "")
+    }
+
+    func testExtractMirrorPrefixNoMarker() {
+        XCTAssertNil(extractMirrorPrefix(from: "Plain title with no marker"))
+    }
+
+    func testExtractMirrorPrefixNilTitle() {
+        XCTAssertNil(extractMirrorPrefix(from: nil))
+    }
+
     // MARK: - mirrorURL encode/decode round-trip
 
     func testMirrorURLEncodeDecodeRoundTrip() {

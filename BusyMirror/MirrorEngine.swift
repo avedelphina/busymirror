@@ -385,14 +385,24 @@ final class MirrorEngine {
                 let maybeMark = blk.tentative ? "Maybe: " : ""
                 // Chained routes: an already-mirrored source event's title already carries its
                 // own upstream prefix, which we don't know how to strip (it isn't ours) — so
-                // re-prefixing here would stack ("B: A: Meeting"). Pass it through untouched instead.
-                // This route's own Privacy always wins, though: hideDetails forces the normal
-                // prefix+placeholder path regardless, so a Private route can never leak an
-                // upstream title just because pass-through is enabled.
-                let passThrough = config.mirrorMirroredEvents && config.passThroughMirroredTitles && blk.isMirrorSource && !config.hideDetails
-                let displayTitle = passThrough
-                    ? (blk.label ?? config.placeholderTitle)
-                    : (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + maybeMark + effectiveTitle
+                // re-prefixing here would stack ("B: A: Meeting"). Reuse it instead, via the
+                // invisible boundary marker every mirrored title embeds after its own prefix.
+                let chained = config.mirrorMirroredEvents && config.passThroughMirroredTitles && blk.isMirrorSource
+                let displayTitle: String
+                if chained && !config.hideDetails {
+                    // Privacy off: relay the upstream title completely verbatim (marker and
+                    // all, so a third hop further down the chain can still extract from it).
+                    displayTitle = blk.label ?? config.placeholderTitle
+                } else if chained {
+                    // Privacy on: this route's own Privacy always wins over the content, but
+                    // the upstream prefix (e.g. "WORK1: ") is still worth keeping so different
+                    // sources stay distinguishable even behind a placeholder. Falls back to this
+                    // route's own prefix if the source predates the marker (no marker found).
+                    let upstreamPrefix = extractMirrorPrefix(from: blk.label) ?? config.titlePrefix
+                    displayTitle = upstreamPrefix + maybeMark + config.placeholderTitle
+                } else {
+                    displayTitle = (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + mirrorTitleMarker + maybeMark + effectiveTitle
+                }
                 let notes = desiredNotes(for: blk)
                 let desiredURL = buildMirrorURL(
                     targetCalID: tgt.calendarIdentifier,

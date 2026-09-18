@@ -14,6 +14,20 @@ func stripPrefix(_ title: String?, prefix: String) -> String {
     return t.hasPrefix(prefix) ? String(t.dropFirst(prefix.count)) : t
 }
 
+// Invisible boundary marker embedded right after a route's prefix when a
+// mirrored title is built (see MirrorEngine's title construction). Lets a
+// downstream chained route recover exactly which characters were "the
+// upstream prefix" without knowing that route's prefix string in advance —
+// unlike stripPrefix, which only strips a prefix you already know.
+let mirrorTitleMarker = "\u{2063}"
+
+// Everything before the marker, if present — the upstream route's prefix,
+// verbatim, for a chained route to preserve under its own Privacy setting.
+func extractMirrorPrefix(from title: String?) -> String? {
+    guard let title, let range = title.range(of: mirrorTitleMarker) else { return nil }
+    return String(title[title.startIndex..<range.lowerBound])
+}
+
 private let mirrorURLAllowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
 
 func mirrorURLComponentEncode(_ raw: String) -> String {
