@@ -2,8 +2,7 @@ import SwiftUI
 import EventKit
 
 struct ContentView: View {
-    private let store = EKEventStore()
-    private let routesDefaultsKey = "routes.v1"
+    private let routeStore = RouteStore.shared
 
     @State private var calendars: [EKCalendar] = []
     @State private var routes: [Route] = []
@@ -28,7 +27,7 @@ struct ContentView: View {
                     }
                     .onDelete { indexSet in
                         routes.remove(atOffsets: indexSet)
-                        saveRoutes()
+                        routeStore.saveRoutes(routes)
                     }
                 }
 
@@ -50,12 +49,12 @@ struct ContentView: View {
             .sheet(isPresented: $showingAddRoute) {
                 AddRouteView(calendars: calendars) { route in
                     routes.append(route)
-                    saveRoutes()
+                    routeStore.saveRoutes(routes)
                 }
             }
             .task {
                 await requestAccessAndLoadCalendars()
-                loadRoutes()
+                routes = routeStore.loadRoutes()
             }
         }
     }
@@ -63,7 +62,7 @@ struct ContentView: View {
     private func routeRow(_ route: Route) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(calLabel(source: route, in: calendars))
+                Text(calendars.first(where: { $0.calendarIdentifier == route.sourceID })?.title ?? "Unknown")
                     .font(.subheadline)
                 Text("→ " + route.targetIDs.compactMap { id in
                     calendars.first(where: { $0.calendarIdentifier == id })?.title
@@ -81,75 +80,23 @@ struct ContentView: View {
         }
     }
 
-    private func calLabel(source route: Route, in calendars: [EKCalendar]) -> String {
-        calendars.first(where: { $0.calendarIdentifier == route.sourceID })?.title ?? "Unknown"
-    }
-
     private func requestAccessAndLoadCalendars() async {
         do {
-            let granted = try await store.requestFullAccessToEvents()
+            let granted = try await routeStore.requestAccess()
             guard granted else {
                 accessError = "Calendar access denied. Enable it in Settings > BusyMirror."
                 return
             }
-            calendars = store.calendars(for: .event).sorted { $0.title < $1.title }
+            calendars = routeStore.calendars()
         } catch {
             accessError = error.localizedDescription
         }
     }
 
     private func run(_ route: Route) async {
-        guard let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) else { return }
-        let targets = calendars.filter { route.targetIDs.contains($0.calendarIdentifier) }
-        guard !targets.isEmpty else { return }
-
         runningRouteID = route.id
-        logLines.removeAll()
         defer { runningRouteID = nil }
-
-        let engine = MirrorEngine(log: { line in
-            Task { @MainActor in logLines.append(line) }
-        })
-        let config = MirrorConfig(
-            daysBack: 1,
-            daysForward: 14,
-            mergeGapMin: route.mergeGapHours * 60,
-            hideDetails: route.privacy,
-            copyDescription: route.copyNotes,
-            mirrorAllDay: route.allDay,
-            overlapMode: route.overlap,
-            titlePrefix: "🪞 ",
-            placeholderTitle: "Busy",
-            filterByWorkHours: false,
-            workHoursStart: 9,
-            workHoursEnd: 17,
-            excludedTitleFilterTerms: [],
-            excludedOrganizerFilterTerms: [],
-            mirrorAcceptedOnly: false,
-            autoDeleteMissing: true,
-            writeEnabled: true,
-            syncReminders: route.syncReminders
-        )
-        var sessionGuard = Set<String>()
-        await engine.runMirror(
-            store: store,
-            config: config,
-            sourceCalendar: source,
-            targetCalendars: targets,
-            sessionGuard: &sessionGuard,
-            isMultiRouteRun: false
-        )
-    }
-
-    private func saveRoutes() {
-        guard let data = try? JSONEncoder().encode(routes) else { return }
-        UserDefaults.standard.set(data, forKey: routesDefaultsKey)
-    }
-
-    private func loadRoutes() {
-        guard let data = UserDefaults.standard.data(forKey: routesDefaultsKey),
-              let decoded = try? JSONDecoder().decode([Route].self, from: data) else { return }
-        routes = decoded
+        logLines = await routeStore.run(route: route, calendars: calendars)
     }
 }
 
