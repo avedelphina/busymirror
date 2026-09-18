@@ -234,7 +234,8 @@ final class BusyMirrorAppController: ObservableObject {
                 autoDeleteMissing: settings.autoDeleteMissing,
                 writeEnabled: true,
                 syncReminders: route.syncReminders,
-                mirrorMirroredEvents: route.mirrorMirroredEvents
+                mirrorMirroredEvents: route.mirrorMirroredEvents,
+                passThroughMirroredTitles: route.passThroughMirroredTitles
             )
             await engine.runMirror(store: backgroundStore, config: config, sourceCalendar: sourceCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: true)
         }

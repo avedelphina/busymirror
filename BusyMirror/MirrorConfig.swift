@@ -18,9 +18,10 @@ struct Route: Identifiable, Hashable, Codable {
     var allDay: Bool               // per-route mirror all-day
     var titlePrefix: String?       // per-route prefix override; nil = use the app's global prefix
     var mirrorMirroredEvents: Bool // if true, don't skip source events that are themselves mirrors (chained mirroring)
-    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix, mirrorMirroredEvents }
+    var passThroughMirroredTitles: Bool // if true, copy an already-mirrored source event's title verbatim instead of re-prefixing it (avoids "B: A: Meeting" stacking on chained routes)
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix, mirrorMirroredEvents, passThroughMirroredTitles }
 
-    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil, mirrorMirroredEvents: Bool = false) {
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil, mirrorMirroredEvents: Bool = false, passThroughMirroredTitles: Bool = false) {
         self.sourceID = sourceID
         self.targetIDs = targetIDs
         self.privacy = privacy
@@ -31,6 +32,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.allDay = allDay
         self.titlePrefix = titlePrefix
         self.mirrorMirroredEvents = mirrorMirroredEvents
+        self.passThroughMirroredTitles = passThroughMirroredTitles
     }
 
     init(from decoder: Decoder) throws {
@@ -45,6 +47,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.allDay = try c.decode(Bool.self, forKey: .allDay)
         self.titlePrefix = try c.decodeIfPresent(String.self, forKey: .titlePrefix)
         self.mirrorMirroredEvents = try c.decodeIfPresent(Bool.self, forKey: .mirrorMirroredEvents) ?? false
+        self.passThroughMirroredTitles = try c.decodeIfPresent(Bool.self, forKey: .passThroughMirroredTitles) ?? false
     }
 }
 
@@ -68,4 +71,5 @@ struct MirrorConfig {
     let writeEnabled: Bool
     let syncReminders: Bool
     let mirrorMirroredEvents: Bool
+    let passThroughMirroredTitles: Bool
 }

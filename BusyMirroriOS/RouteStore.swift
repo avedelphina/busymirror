@@ -86,7 +86,8 @@ final class RouteStore {
             autoDeleteMissing: true,
             writeEnabled: true,
             syncReminders: route.syncReminders,
-            mirrorMirroredEvents: route.mirrorMirroredEvents
+            mirrorMirroredEvents: route.mirrorMirroredEvents,
+            passThroughMirroredTitles: route.passThroughMirroredTitles
         )
         var sessionGuard = Set<String>()
         await engine.runMirror(

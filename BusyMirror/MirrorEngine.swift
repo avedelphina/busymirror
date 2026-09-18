@@ -173,14 +173,15 @@ final class MirrorEngine {
                 continue
             }
             if !config.mirrorAllDay && ev.isAllDay { continue }
-            if !config.mirrorMirroredEvents && isMirrorEvent(ev, prefix: config.titlePrefix, placeholder: config.placeholderTitle) {
+            let evIsMirror = isMirrorEvent(ev, prefix: config.titlePrefix, placeholder: config.placeholderTitle)
+            if !config.mirrorMirroredEvents && evIsMirror {
                 skippedMirrors += 1
                 continue
             }
             guard let s = ev.startDate, let e = ev.endDate, e > s else { continue }
             guard ev.calendar.calendarIdentifier == srcCal.calendarIdentifier else { continue }
             let srcID = stableSourceIdentifier(for: ev)
-            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate, alarmOffsets: alarmOffsets(for: ev), tentative: isTentative))
+            srcBlocks.append(Block(start: s, end: e, srcStableID: srcID, label: ev.title, notes: ev.notes, occurrence: ev.occurrenceDate, alarmOffsets: alarmOffsets(for: ev), tentative: isTentative, isMirrorSource: evIsMirror))
         }
         if skippedMirrors > 0 {
             log("- SKIP mirrored-on-source: \(skippedMirrors) instance(s)")
@@ -382,7 +383,13 @@ final class MirrorEngine {
                 let effectiveTitle = config.hideDetails ? config.placeholderTitle : (baseSourceTitle.isEmpty ? config.placeholderTitle : baseSourceTitle)
                 let titleSuffix = config.hideDetails ? "" : (baseSourceTitle.isEmpty ? "" : " — \(baseSourceTitle)")
                 let maybeMark = blk.tentative ? "Maybe: " : ""
-                let displayTitle = (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + maybeMark + effectiveTitle
+                // Chained routes: an already-mirrored source event's title already carries its
+                // own upstream prefix, which we don't know how to strip (it isn't ours) — so
+                // re-prefixing here would stack ("B: A: Meeting"). Pass it through untouched instead.
+                let passThrough = config.mirrorMirroredEvents && config.passThroughMirroredTitles && blk.isMirrorSource
+                let displayTitle = passThrough
+                    ? (blk.label ?? config.placeholderTitle)
+                    : (config.titlePrefix.isEmpty ? "" : config.titlePrefix) + maybeMark + effectiveTitle
                 let notes = desiredNotes(for: blk)
                 let desiredURL = buildMirrorURL(
                     targetCalID: tgt.calendarIdentifier,

@@ -9,6 +9,7 @@ struct Block: Hashable {
     let occurrence: Date?     // occurrenceDate for recurring instances
     let alarmOffsets: [TimeInterval]?  // relative alarm offsets copied from source event
     var tentative: Bool = false        // source "Maybe" RSVP; mirrored with a marker
+    var isMirrorSource: Bool = false   // true if the source event is itself a BusyMirror placeholder (chained routes)
     // ponytail: lost on the merge path (mergeGapMin > 0) along with the title; only tracked in per-event mode
 
     /// Convenience factory for time-only blocks (used internally for occupancy tracking).
@@ -25,7 +26,8 @@ struct Block: Hashable {
         lhs.label == rhs.label &&
         lhs.notes == rhs.notes &&
         lhs.occurrence == rhs.occurrence &&
-        lhs.tentative == rhs.tentative
+        lhs.tentative == rhs.tentative &&
+        lhs.isMirrorSource == rhs.isMirrorSource
     }
 
     func hash(into hasher: inout Hasher) {
@@ -36,6 +38,7 @@ struct Block: Hashable {
         hasher.combine(notes)
         hasher.combine(occurrence)
         hasher.combine(tentative)
+        hasher.combine(isMirrorSource)
     }
 }
 
