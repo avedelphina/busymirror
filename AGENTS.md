@@ -6,9 +6,9 @@
 
 **BusyMirror** is a macOS utility (standard app + menu bar extra) that mirrors calendar events from a source calendar into one or more target calendars, creating busy-placeholder events so availability stays consistent across accounts and devices.
 
-It is written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The macOS app runs as a standard app (Dock icon, ⌘Q) and also has a `MenuBarExtra` for quick sync/status. An iOS/iPadOS app is being scaffolded as a **separate, standalone target** — not a Mac companion (no Handoff, no cross-device state sync) — sharing only the platform-neutral engine files. See "iOS/iPadOS target" below and `ROADMAP.md`.
+It is written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The macOS app runs as a standard app (Dock icon, ⌘Q) and also has a `MenuBarExtra` for quick sync/status. There's also a **separate, standalone iOS/iPadOS app** (`BusyMirroriOS` target, same Xcode project) — not a Mac companion, no Handoff, no cross-device state sync, own local routes and EventKit access. The two platforms version independently (see "Versioning" below). See "iOS/iPadOS target" below and `ROADMAP.md` for the full feature history.
 
-Key capabilities:
+Key capabilities (macOS):
 - Manual or route-driven multi-source mirroring
 - Privacy mode: hide details (placeholder title)
 - DRY-RUN mode to preview changes without writing
@@ -16,44 +16,60 @@ Key capabilities:
 - Settings autosave/restore, plus Import/Export JSON
 - CLI support for headless/scripted runs
 
+Key capabilities (iOS/iPadOS):
+- Route-driven mirroring, same per-route option set as Mac (Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode)
+- Shortcuts/Siri via App Intents (run one route, run all, status) — the iOS equivalent of the Mac CLI
+- Best-effort background sync (`BGAppRefreshTask`, no delivery guarantee — foreground/Shortcuts-triggered is the reliable path)
+- **Chained mirroring**: per-route toggles to deliberately re-mirror an already-mirrored event across devices (e.g. phone mirrors Work → shared iCloud calendar, Mac mirrors that onward) — see "Chained mirroring" below
+- Per-route prefix mode (Global / Custom / None) and cross-device "already mirrored" detection
+
 ## Technology Stack
 
 | Layer | Technology |
 |-------|------------|
 | Language | Swift 5.0 |
-| UI Framework | SwiftUI + AppKit (menu bar, panels) |
+| UI Framework | SwiftUI (+ AppKit on macOS for the menu bar/panels) |
 | Calendar API | EventKit (`EKEventStore`, `EKEvent`, `EKCalendar`) |
-| Persistence | `UserDefaults` (JSON-encoded settings), `@AppStorage` |
-| Scheduling | `launchd` / `launchctl` (user LaunchAgent) |
-| Build System | Xcode project (`BusyMirror.xcodeproj`) + Makefile |
-| Target OS | macOS 15.5+ |
-| Signing | Ad-hoc (`CODE_SIGN_IDENTITY = "-"`) — not notarized |
+| Persistence | `UserDefaults` (JSON-encoded settings), `@AppStorage` (macOS) |
+| Scheduling | `launchd` / `launchctl` (macOS LaunchAgent); `BGTaskScheduler` (iOS, best-effort) |
+| Automation | CLI flags (macOS); App Intents / Shortcuts (iOS) |
+| Build System | Xcode project (`BusyMirror.xcodeproj`) + Makefile (macOS release pipeline) |
+| Target OS | macOS 15.5+, iOS/iPadOS 17.0+ |
+| Signing | macOS: Developer ID + notarized (`make package`). iOS: automatic signing, TestFlight for distribution |
 
 No external Swift Package Manager dependencies are used. The project is self-contained.
 
 ## Project Structure
 
 ```
-BusyMirror/
+BusyMirror/                      # macOS app target
 ├── BusyMirrorApp.swift          # App entry point; defines Window + MenuBarExtra
-├── ContentView.swift            # Main UI, settings, CLI, scheduling (≈1800 lines)
-├── MirrorEngine.swift           # EventKit mirror engine (read, deduplicate, merge, create/update/delete)
-├── MirrorConfig.swift           # Configuration struct passed to the engine
-├── MirrorUtils.swift            # URL builders, mirror detection, calendar labels
-├── BlockMath.swift              # Block merging, gap calculation, overlap logic (Block.span factory)
-├── EventFilters.swift           # Work-hours, title, and organizer filters
-├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator) + menu bar view
-├── AppLogStore.swift            # File-backed log store with rotation (AppLogStore enum)
+├── ContentView.swift            # Main UI, settings, CLI, scheduling
+├── RoutesSectionView.swift      # Routes list/editor (split out of ContentView in 1.8.0)
+├── CalendarsSectionView.swift   # Calendar picker section
+├── ScheduleSectionView.swift    # launchd scheduling UI
+├── LogSectionView.swift         # Activity log view
+├── PreferencesView.swift        # Settings window (@AppStorage-backed defaults)
+├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator, auto-sync) + menu bar view
+├── MirrorEngine.swift           # EventKit mirror engine (read, deduplicate, merge, create/update/delete) — shared with iOS
+├── MirrorConfig.swift           # Route + MirrorConfig structs — shared with iOS
+├── MirrorUtils.swift            # URL builders, mirror detection, calendar labels, title marker — shared with iOS
+├── BlockMath.swift              # Block merging, gap calculation, overlap logic (Block.span factory) — shared with iOS
+├── EventFilters.swift           # Work-hours, title, and organizer filters — shared with iOS
+├── CalendarDisplay.swift        # calColor/calChip/calLabel view helpers — shared with iOS
+├── AppLogStore.swift            # File-backed log store with rotation — shared with iOS
 ├── Info.plist                   # calendar/reminders usage descriptions
 ├── BusyMirror.entitlements      # App sandbox + calendar access entitlement
 └── Assets.xcassets/             # AppIcon set and accent color
 
-BusyMirror.xcodeproj/            # Xcode project (PBXFileSystemSynchronizedRootGroup — new .swift files are auto-included)
-BusyMirrorTests/                 # Unit tests: BlockMathTests, EventFiltersTests, MirrorUtilsTests (45 tests)
-BusyMirrorUITests/               # UI tests (empty)
+BusyMirroriOS/                   # iOS/iPadOS app target — see "iOS/iPadOS target" below
+
+BusyMirror.xcodeproj/            # Xcode project (PBXFileSystemSynchronizedRootGroup — new .swift files are auto-included per target's folder)
+BusyMirrorTests/                 # Unit tests: BlockMathTests, EventFiltersTests, MirrorUtilsTests, SettingsPayloadTests (49 tests)
+BusyMirrorUITests/                # UI tests (empty)
 ```
 
-**Architecture note:** `ContentView.swift` handles the SwiftUI view hierarchy, settings serialization, CLI argument parsing, `launchd` scheduling, and logging. The EventKit mirror engine lives in `MirrorEngine.swift` and is invoked from `ContentView` via `makeEngine()`. Pure helper logic (block math, filters, URL utilities) has been extracted into standalone files for testability.
+**Architecture note:** `ContentView.swift` handles the SwiftUI view hierarchy, settings serialization, CLI argument parsing, `launchd` scheduling, and logging; `RoutesSectionView`/`CalendarsSectionView`/`ScheduleSectionView`/`LogSectionView` are view-layer extractions (state stays owned by `ContentView`/`@AppStorage`). The EventKit mirror engine lives in `MirrorEngine.swift` and is invoked from `ContentView` via `makeEngine()`. Pure helper logic (block math, filters, URL utilities, mirror detection) has been extracted into standalone files for testability — these same files are shared with the iOS target unchanged.
 
 When making changes, keep the existing data flow (`@EnvironmentObject`, `@AppStorage`, `@State`) intact in `ContentView.swift`.
 
@@ -63,12 +79,15 @@ When making changes, keep the existing data flow (`@EnvironmentObject`, `@AppSto
 
 ```
 BusyMirroriOS/
-├── BusyMirroriOSApp.swift   # App entry point (plain WindowGroup, no MenuBarExtra)
-├── ContentView.swift        # iOS UI — currently a placeholder (source/target picker + Sync Now)
-└── Info.plist                # NSCalendarsFullAccessUsageDescription + iOS-only keys
+├── BusyMirroriOSApp.swift   # App entry point (WindowGroup, no MenuBarExtra) + BGAppRefreshTask registration
+├── ContentView.swift        # Routes list, add/edit/delete, Sync All, Clean Up Placeholders, Settings sheet
+├── RouteStore.swift         # @MainActor singleton: route persistence, calendar access, run/cleanup — shared by ContentView and the App Intents so both call the same logic
+├── RouteIntents.swift       # App Intents (RunRouteIntent, RunAllRoutesIntent, GetStatusIntent) + AppShortcutsProvider
+├── Info.plist                # NSCalendarsFullAccessUsageDescription, BGTaskSchedulerPermittedIdentifiers, UIBackgroundModes
+└── Assets.xcassets/          # AppIcon (full multi-size iOS iconset, flattened to opaque — see "Icons" note below)
 ```
 
-The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`. These must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
+The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`. `Route` and `OverlapMode` live in `MirrorConfig.swift` (not `ContentView.swift`) specifically so both targets can use them. These files must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
 
 Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`) is excluded from the iOS target and stays Mac-only.
 
@@ -77,34 +96,46 @@ Build/test the iOS target from the command line (no simulator runtime required �
 xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build
 ```
 
+**Icons gotcha:** the iOS target's `ASSETCATALOG_COMPILER_APPICON_NAME` must be set and `Assets.xcassets` must contain a valid opaque 1024×1024 App Store icon before an archive will validate. iOS rejects an alpha channel on that icon (unlike macOS, which expects one). Also, a brand-new iOS target created via `new_target` in Xcode's project API doesn't set `GENERATE_INFOPLIST_FILE = YES` the way the template-generated Mac target does — without it, `CFBundleIdentifier`/`CFBundleExecutable`/version keys never get merged into the built Info.plist, which silently breaks the App Intents metadata build step (`AppIntentsSSUTraining`) with "Unable to parse Info.plist".
+
+## Chained mirroring
+
+A route can deliberately re-mirror an event that's already a mirror from a different route/device — e.g., an iOS route mirrors Work → a shared iCloud calendar, then a Mac route mirrors that shared calendar onward to other calendars. Two per-route `Route` fields (`MirrorConfig.swift`) control this, both default `false`/off (normal loop-guard behavior unchanged):
+
+- **`mirrorMirroredEvents`**: bypasses the loop-guard (`MirrorEngine.swift`, the `isMirrorEvent` check before a source event is skipped) for that route's source read. Detection is via the `mirror://...` URL tag every mirror event carries (`MirrorUtils.swift`'s `buildMirrorURL`/`isMirrorEvent`) — independent of title prefix, app, or device, so it works across the Mac/iOS boundary even though the two don't share routes or settings.
+- **`passThroughMirroredTitles`**: only meaningful with the above on. Without it, re-prefixing an already-mirrored title stacks (e.g. `B: A: Meeting`). With Privacy off, the upstream title is relayed completely verbatim. With Privacy on (which always wins — a Private route can never leak an upstream title just because pass-through is on), this route's own placeholder is used but the upstream route's *prefix* is preserved via `mirrorTitleMarker` (`MirrorUtils.swift`, an invisible U+2063 marker embedded right after a route's own prefix on every newly-built title) and `extractMirrorPrefix(from:)`. This lets a chained event (e.g. `WORK1: Busy`) and a genuinely native event on the same source calendar (e.g. `WORK: Busy`, this route's own prefix) stay distinguishable even though both are hidden behind placeholders — detection (`Block.isMirrorSource`) happens per event, not per calendar, so a source calendar can mix both kinds.
+
+Route's third prefix-related field, `titlePrefix: String?`, has three states: `nil` = inherit the app's global prefix, `""` = no prefix at all, non-empty = custom override. The iOS `RouteFormView` exposes this as a Global/Custom/None picker; Mac's `RoutesSectionView`/`PreferencesView` don't expose any of these three fields in the UI yet (the `Route` model supports them since it's shared, but Mac's own UI is a follow-up).
+
 ## Build and Release Commands
 
-### Makefile targets
+### Makefile targets (macOS)
 
 ```bash
 make build-debug      # Debug build via xcodebuild
 make build-release    # Release build via xcodebuild
-make sign-app         # Ad-hoc sign the Release app (strip xattr, codesign)
+make sign-app         # Sign the Release app with the Developer ID cert (strip xattr, codesign)
+make notarize         # sign-app, then submit to Apple's notary service and staple the ticket
+make package          # notarize, then create BusyMirror-<version>-macOS.zip + .sha256
 make app              # Verify signed app exists
-make package          # Create BusyMirror-<version>-macOS.zip + .sha256
 make clean            # Clean derived data
 ```
 
+Signing happens in a `/tmp` scratch dir, not in-repo — this repo lives under iCloud Drive, which tags freshly written files with `com.apple.FinderInfo` before `codesign` can see it, and `codesign` refuses to sign a bundle carrying that xattr.
+
 Built products:
 - Unsigned release: `build/DerivedData/Build/Products/Release/BusyMirror.app`
-- Signed release: `build/ReleaseSigned/BusyMirror.app`
+- Signed + notarized: zipped as `BusyMirror-<version>-macOS.zip` at the repo root
 
 ### Xcode
 
-1. Open `BusyMirror.xcodeproj`.
-2. Select **BusyMirror** scheme → **My Mac**.
-3. **Product → Build** (or **Archive** for distribution).
+macOS: open `BusyMirror.xcodeproj`, scheme **BusyMirror** → **My Mac**, **Product → Build** (or **Archive** for distribution).
+
+iOS: scheme **BusyMirroriOS**, destination = a real device (no simulator runtime on this machine) or **Any iOS Device (arm64)** for archiving. See the `xcodebuild` command in "iOS/iPadOS target" above for a signing-free CLI build.
 
 ### Versioning
 
-- `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` live in `project.pbxproj`.
-- The Makefile extracts `MARKETING_VERSION` automatically for ZIP naming.
-- Update both Debug and Release build configurations when bumping the version.
+macOS and iOS version **independently** — separate `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` per target in `project.pbxproj`, separate `CHANGELOG.md` entries (iOS entries tagged `[iOS x.y.z]`; unmarked entries are macOS). Different maturity levels and feature surfaces (CLI/launchd don't exist on iOS; App Intents/BGTask don't exist on Mac), and App Store Connect itself tracks iOS/macOS builds independently even under one app record — no platform reason to force them to match. The Makefile's `VERSION` extraction (`sed` on `project.pbxproj` for the first `MARKETING_VERSION` match, used for ZIP naming) relies on the Mac target's entries appearing before the iOS target's in the file — true today, but worth a sanity check (`grep -n MARKETING_VERSION BusyMirror.xcodeproj/project.pbxproj`) if that ever seems wrong after a project-file reshuffle. Update both Debug and Release build configurations when bumping either platform's version.
 
 ## Code Style Guidelines
 
@@ -116,9 +147,9 @@ Built products:
 
 ## Testing
 
-- Unit tests exist in `BusyMirrorTests/` for `BlockMath`, `EventFilters`, and `MirrorUtils`.
-- When adding logic, prefer extracting pure functions (e.g., block merging, gap calculation, filter logic) so they can be unit-tested.
-- Manual testing checklist for releases:
+- Unit tests exist in `BusyMirrorTests/` for `BlockMath`, `EventFilters`, `MirrorUtils`, and `SettingsPayload` (49 tests total) — these cover code shared with iOS too, since the source files are the same. Run: `xcodebuild -project BusyMirror.xcodeproj -scheme BusyMirror -destination 'platform=macOS' -only-testing:BusyMirrorTests test`.
+- When adding logic, prefer extracting pure functions (e.g., block merging, gap calculation, filter logic, mirror detection) so they can be unit-tested — this is also what keeps a function usable from both targets.
+- Manual testing checklist for macOS releases:
   1. Grant Calendar permission.
   2. Select a source and target, run DRY-RUN, verify log output.
   3. Toggle WRITE and run Mirror Now; verify placeholders appear in the target calendar.
@@ -126,14 +157,20 @@ Built products:
   5. Test Cleanup Placeholders (dry-run and write).
   6. Add a route, install a schedule, verify the LaunchAgent plist is created in `~/Library/LaunchAgents/`.
   7. Trigger a menu-bar sync and confirm the window opens if not visible.
+- Manual testing checklist for iOS/iPadOS (no simulator runtime on this machine — use a real device via `xcodebuild ... -destination 'platform=iOS,id=<UDID>'`, `xcrun devicectl list devices` to find the UDID):
+  1. Grant Calendar permission on first launch.
+  2. Add a route, run it manually, verify the placeholder appears.
+  3. Run a Shortcuts action (run route / run all / status) and confirm it matches in-app behavior.
+  4. Test Clean Up Placeholders and Sync All.
+  5. For chained-mirroring changes: verify both the Privacy-off (verbatim relay) and Privacy-on (prefix-preserved via marker) paths.
 
 ## Security and Privacy Considerations
 
-- **Calendar data:** the app reads and writes the user’s calendars via EventKit. It must handle permission denial gracefully.
-- **Sandbox:** the app uses the macOS app sandbox (`com.apple.security.app-sandbox`) and the `com.apple.security.personal-information.calendars` entitlement.
-- **Signing:** releases are ad-hoc signed only (`codesign --sign -`). They are **not notarized**. Gatekeeper may block the app on first launch; users may need to right-click → Open.
-- **Loop guard:** a `sessionGuard` set prevents mirroring an event into the same target twice in one run, and prefix-based detection (`titlePrefix`) prevents re-mirroring already-mirrored placeholders.
-- **Logging:** log files are written to the user’s `~/Library/Logs/BusyMirror/`. No log data is transmitted externally.
+- **Calendar data:** both apps read and write the user's calendars via EventKit. Must handle permission denial gracefully.
+- **Sandbox (macOS):** the app uses the macOS app sandbox (`com.apple.security.app-sandbox`) and the `com.apple.security.personal-information.calendars` entitlement.
+- **Signing:** macOS releases are Developer ID signed and notarized (`make package`, since 1.10.0) — no more ad-hoc/Gatekeeper workaround needed. iOS builds are automatically signed for TestFlight/device installs.
+- **Loop guard:** a `sessionGuard` set prevents mirroring an event into the same target twice in one run. Cross-mirror detection is primarily via the `mirror://...` URL tag every mirror event carries (`MirrorUtils.swift`), not the title prefix — the URL check is prefix/app/device-independent, which is what makes chained mirroring across the Mac/iOS boundary reliable. Title-prefix matching is a secondary fallback only.
+- **Logging:** log files are written to the user's `~/Library/Logs/BusyMirror/` (macOS) or the app's container (iOS). No log data is transmitted externally.
 
 ## CLI and Scheduling
 
@@ -168,14 +205,18 @@ Scheduled runs are implemented by generating a `launchd` plist in `~/Library/Lau
 | `BusyMirror/AppLogStore.swift` | File-backed log with rotation (`~/Library/Logs/BusyMirror/`) |
 | `BusyMirror/Info.plist` | calendar/reminders usage descriptions |
 | `BusyMirror/BusyMirror.entitlements` | Sandbox + calendar entitlement |
-| `Makefile` | Reproducible build, sign, and package targets |
-| `CHANGELOG.md` | Release notes (human-readable) |
-| `ROADMAP.md` | Planned features |
+| `BusyMirroriOS/ContentView.swift` | iOS UI — routes list, Sync All, Cleanup, Settings sheet |
+| `BusyMirroriOS/RouteStore.swift` | iOS route persistence/run logic, shared by UI and App Intents |
+| `BusyMirroriOS/RouteIntents.swift` | Shortcuts/Siri App Intents |
+| `Makefile` | Reproducible macOS build, sign, notarize, and package targets |
+| `CHANGELOG.md` | Release notes (human-readable); iOS entries tagged `[iOS x.y.z]` |
+| `ROADMAP.md` | Planned features and detailed feature-history notes for both platforms |
 
 ## Notes for Agents
 
 - Do **not** add third-party dependencies unless the user explicitly asks. The project intentionally has zero external packages.
-- If you refactor `ContentView.swift`, preserve `@AppStorage` keys and `UserDefaults` keys exactly; users have existing settings on disk.
-- The mirror engine (`MirrorEngine.swift`) is `@MainActor` and accepts an `EKEventStore` plus a logging closure. It does not directly mutate SwiftUI `@State`; `ContentView` manages all view state.
-- When modifying build settings, update both Debug and Release configurations in `project.pbxproj`, and update `CHANGELOG.md` if the change is user-visible.
+- If you refactor `ContentView.swift` (either target), preserve `@AppStorage`/`UserDefaults` keys exactly; users have existing settings on disk.
+- The mirror engine (`MirrorEngine.swift`) is `@MainActor` and accepts an `EKEventStore` plus a logging closure. It does not directly mutate SwiftUI `@State`; the calling view/store manages all view state.
+- A change to a file shared between targets (see "iOS/iPadOS target" above for the list) must build and test clean on **both** — check `BusyMirroriOS` with the `xcodebuild ... -sdk iphoneos CODE_SIGNING_ALLOWED=NO build` command above in addition to the Mac build/tests.
+- When modifying build settings, update both Debug and Release configurations in `project.pbxproj`, and update `CHANGELOG.md` if the change is user-visible. Remember macOS and iOS version independently (see "Versioning" above) — don't bump one just because the other changed.
 - Do not run `git commit`, `git push`, or similar operations unless explicitly asked.

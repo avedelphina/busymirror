@@ -2,6 +2,8 @@
 
 BusyMirror mirrors meetings between your calendars so your availability stays consistent across accounts/devices.
 
+There's a macOS app and a separate, standalone iOS/iPadOS app (own routes, own calendar access — not a Mac companion, no sync between them). This README covers macOS; see [iOS/iPadOS](#iosipados) below for the other one.
+
 On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also has a menu bar icon for quick sync/status without opening the main window.
 
 ## What it does (current)
@@ -70,6 +72,30 @@ See `CHANGELOG.md` for notable changes.
 - Hourly schedules use `launchd` `StartInterval`; daily and weekday schedules use `StartCalendarInterval`.
 - You can remove the job from the same UI with `Remove Schedule`, and inspect the generated plist with `Reveal LaunchAgent`.
 - Note: scheduled headless runs depend on Calendar permission being granted to the installed app. Because these local builds are unsigned, macOS may require re-granting permission after replacing the app bundle with a new build.
+
+## iOS/iPadOS
+
+A separate, standalone app (`BusyMirroriOS` target, same Xcode project) — its own local routes and EventKit access, no Handoff/CloudKit sync with the Mac app, by design. Requires iOS/iPadOS 17.0+.
+
+### What it does
+- Route-driven mirroring with the same per-route options as Mac: Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode.
+- Sync All and per-route Run, Clean Up Placeholders, a "Last synced" indicator.
+- Shortcuts/Siri support via App Intents: run one route, run all routes, or ask for status — the iOS equivalent of the Mac CLI.
+- Best-effort background sync (`BGAppRefreshTask`) — iOS decides if/when it runs, no delivery guarantee. Foreground sync or a Shortcuts automation is the reliable path.
+- Settings: editable mirror prefix, title/organizer skip filters.
+- Calendar color chips to tell apart same-named calendars across accounts, and a ⚠️ badge for calendars that already contain mirrored events (from either app, any device) — useful since Mac and iOS have separate calendar sets.
+
+### Chained mirroring
+A route can deliberately re-mirror an event that's already a mirror from a different route or device — e.g. an iOS route mirrors a work calendar into a shared iCloud calendar, then a Mac route mirrors that onward into other calendars. Two per-route toggles control this:
+- **Mirror already-mirrored events** — off by default (the normal loop-guard skips already-mirrored source events to prevent re-mirroring). Turn on only for a deliberate chain; enabling it on a route that loops back to its own target duplicates events on every run.
+- **Copy chained titles as-is** — avoids the upstream prefix stacking onto this route's own (e.g. `B: A: Meeting`). With Privacy off, the upstream title is relayed verbatim. With Privacy on (which always wins), this route's own placeholder is used but the upstream prefix is preserved, so a chained event and a genuinely native event on the same source calendar can still look different even behind placeholders.
+
+Each route's prefix can also be set independently: inherit the global prefix, a custom per-route prefix, or no prefix at all.
+
+### Build
+- Open `BusyMirror.xcodeproj`, scheme `BusyMirroriOS`, destination = a real device (run) or **Any iOS Device (arm64)** (archive).
+- Command line (no simulator needed): `xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`
+- Distribution is via TestFlight (internal or external testers), not yet on the App Store.
 
 ## Roadmap
 See [ROADMAP.md](ROADMAP.md)
