@@ -283,6 +283,13 @@ private struct SettingsSheet: View {
     }
 }
 
+private enum PrefixMode: String, CaseIterable, Identifiable {
+    case global = "Global"
+    case custom = "Custom"
+    case none = "None"
+    var id: String { rawValue }
+}
+
 private struct RouteFormView: View {
     let calendars: [EKCalendar]
     let existing: Route?
@@ -299,6 +306,7 @@ private struct RouteFormView: View {
     @State private var allDay: Bool
     @State private var mergeGapHours: Int
     @State private var overlap: OverlapMode
+    @State private var prefixMode: PrefixMode
     @State private var titlePrefixText: String
     @State private var mirrorMirroredEvents: Bool
     @State private var passThroughMirroredTitles: Bool
@@ -317,7 +325,17 @@ private struct RouteFormView: View {
         _allDay = State(initialValue: existing?.allDay ?? false)
         _mergeGapHours = State(initialValue: existing?.mergeGapHours ?? 0)
         _overlap = State(initialValue: existing?.overlap ?? .allow)
-        _titlePrefixText = State(initialValue: existing?.titlePrefix ?? "")
+        switch existing?.titlePrefix {
+        case .some(let p) where p.isEmpty:
+            _prefixMode = State(initialValue: .none)
+            _titlePrefixText = State(initialValue: "")
+        case .some(let p):
+            _prefixMode = State(initialValue: .custom)
+            _titlePrefixText = State(initialValue: p)
+        case .none:
+            _prefixMode = State(initialValue: .global)
+            _titlePrefixText = State(initialValue: "")
+        }
         _mirrorMirroredEvents = State(initialValue: existing?.mirrorMirroredEvents ?? false)
         _passThroughMirroredTitles = State(initialValue: existing?.passThroughMirroredTitles ?? false)
     }
@@ -360,11 +378,26 @@ private struct RouteFormView: View {
                     }
                 }
                 Section {
-                    TextField(globalPrefix, text: $titlePrefixText)
+                    Picker("Prefix", selection: $prefixMode) {
+                        ForEach(PrefixMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    if prefixMode == .custom {
+                        TextField("e.g. WORK1: ", text: $titlePrefixText)
+                    }
                 } header: {
-                    Text("Prefix override")
+                    Text("Prefix")
                 } footer: {
-                    Text("Leave blank to use the global mirror prefix (\(globalPrefix)) set in Settings.")
+                    switch prefixMode {
+                    case .global:
+                        Text("Uses the global mirror prefix (\(globalPrefix)) set in Settings.")
+                    case .custom:
+                        Text("Uses a prefix specific to this route.")
+                    case .none:
+                        Text("No prefix at all for this route's mirrored events.")
+                    }
                 }
                 Section {
                     Toggle("Mirror already-mirrored events", isOn: $mirrorMirroredEvents)
@@ -408,6 +441,12 @@ private struct RouteFormView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let sourceID else { return }
+                        let resolvedPrefix: String?
+                        switch prefixMode {
+                        case .global: resolvedPrefix = nil
+                        case .none: resolvedPrefix = ""
+                        case .custom: resolvedPrefix = titlePrefixText
+                        }
                         onSave(Route(
                             sourceID: sourceID,
                             targetIDs: targetIDs,
@@ -417,7 +456,7 @@ private struct RouteFormView: View {
                             mergeGapHours: mergeGapHours,
                             overlap: overlap,
                             allDay: allDay,
-                            titlePrefix: titlePrefixText.isEmpty ? nil : titlePrefixText,
+                            titlePrefix: resolvedPrefix,
                             mirrorMirroredEvents: mirrorMirroredEvents,
                             passThroughMirroredTitles: passThroughMirroredTitles
                         ))
