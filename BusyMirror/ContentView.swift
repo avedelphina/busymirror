@@ -3,11 +3,6 @@ import EventKit
 import AppKit
 
 
-enum OverlapMode: String, CaseIterable, Identifiable, Codable {
-    case allow, skipCovered, fillGaps
-    var id: String { rawValue }
-}
-
 enum ScheduleMode: String, CaseIterable, Identifiable {
     case hourly, daily, weekdays
     var id: String { rawValue }

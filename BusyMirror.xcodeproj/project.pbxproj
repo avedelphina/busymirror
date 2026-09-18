@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		4757B59DF140F12051FD0289 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 52FFBDD65931219138D6A9F9 /* Foundation.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		37FF488E2E58682D00DDCE6A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,15 +31,41 @@
 		37FF487F2E58682A00DDCE6A /* BusyMirror.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BusyMirror.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37FF488D2E58682D00DDCE6A /* BusyMirrorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BusyMirrorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		37FF48972E58682D00DDCE6A /* BusyMirrorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BusyMirrorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		52FFBDD65931219138D6A9F9 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		5C8E8AC747448DB9D38CB56B /* BusyMirroriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BusyMirroriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		214395A66286ED37B30D753E /* Exceptions for "BusyMirroriOS" folder in "BusyMirroriOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 886286D0D97B98EEDA19305F /* BusyMirroriOS */;
+		};
 		37FF48AB2E586A0700DDCE6A /* Exceptions for "BusyMirror" folder in "BusyMirror" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 37FF487E2E58682A00DDCE6A /* BusyMirror */;
+		};
+		41160BA689A7A09F053298F9 /* Exceptions for "BusyMirror" folder in "BusyMirroriOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				MenuBarSupport.swift,
+				ContentView.swift,
+				BusyMirrorApp.swift,
+				PreferencesView.swift,
+				RoutesSectionView.swift,
+				CalendarsSectionView.swift,
+				ScheduleSectionView.swift,
+				LogSectionView.swift,
+				Info.plist,
+				BusyMirror.entitlements,
+				Assets.xcassets,
+			);
+			target = 886286D0D97B98EEDA19305F /* BusyMirroriOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -44,23 +74,44 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				37FF48AB2E586A0700DDCE6A /* Exceptions for "BusyMirror" folder in "BusyMirror" target */,
+				41160BA689A7A09F053298F9 /* Exceptions for "BusyMirror" folder in "BusyMirroriOS" target */,
 			);
 			path = BusyMirror;
 			sourceTree = "<group>";
 		};
 		37FF48902E58682D00DDCE6A /* BusyMirrorTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = BusyMirrorTests;
 			sourceTree = "<group>";
 		};
 		37FF489A2E58682D00DDCE6A /* BusyMirrorUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = BusyMirrorUITests;
+			sourceTree = "<group>";
+		};
+		F719228F348F6C5863734173 /* BusyMirroriOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				214395A66286ED37B30D753E /* Exceptions for "BusyMirroriOS" folder in "BusyMirroriOS" target */,
+			);
+			path = BusyMirroriOS;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		2934DEDFBB535250003CF1A4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4757B59DF140F12051FD0289 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		37FF487C2E58682A00DDCE6A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -85,6 +136,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0FC9D5B31ECAAA52808F4DEE /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				52FFBDD65931219138D6A9F9 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 		37FF48762E58682A00DDCE6A = {
 			isa = PBXGroup;
 			children = (
@@ -92,6 +151,8 @@
 				37FF48902E58682D00DDCE6A /* BusyMirrorTests */,
 				37FF489A2E58682D00DDCE6A /* BusyMirrorUITests */,
 				37FF48802E58682A00DDCE6A /* Products */,
+				F719228F348F6C5863734173 /* BusyMirroriOS */,
+				6F2AD89E2DD00CBF8371405D /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -101,8 +162,17 @@
 				37FF487F2E58682A00DDCE6A /* BusyMirror.app */,
 				37FF488D2E58682D00DDCE6A /* BusyMirrorTests.xctest */,
 				37FF48972E58682D00DDCE6A /* BusyMirrorUITests.xctest */,
+				5C8E8AC747448DB9D38CB56B /* BusyMirroriOS.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		6F2AD89E2DD00CBF8371405D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				0FC9D5B31ECAAA52808F4DEE /* iOS */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -124,8 +194,6 @@
 				37FF48812E58682A00DDCE6A /* BusyMirror */,
 			);
 			name = BusyMirror;
-			packageProductDependencies = (
-			);
 			productName = BusyMirror;
 			productReference = 37FF487F2E58682A00DDCE6A /* BusyMirror.app */;
 			productType = "com.apple.product-type.application";
@@ -147,8 +215,6 @@
 				37FF48902E58682D00DDCE6A /* BusyMirrorTests */,
 			);
 			name = BusyMirrorTests;
-			packageProductDependencies = (
-			);
 			productName = BusyMirrorTests;
 			productReference = 37FF488D2E58682D00DDCE6A /* BusyMirrorTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -170,11 +236,30 @@
 				37FF489A2E58682D00DDCE6A /* BusyMirrorUITests */,
 			);
 			name = BusyMirrorUITests;
-			packageProductDependencies = (
-			);
 			productName = BusyMirrorUITests;
 			productReference = 37FF48972E58682D00DDCE6A /* BusyMirrorUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		886286D0D97B98EEDA19305F /* BusyMirroriOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD4C1754D82402A61F53C79A /* Build configuration list for PBXNativeTarget "BusyMirroriOS" */;
+			buildPhases = (
+				DF6192D38814B2DF9D216B3D /* Sources */,
+				2934DEDFBB535250003CF1A4 /* Frameworks */,
+				BC27F4837D2B49B705AE1932 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				F719228F348F6C5863734173 /* BusyMirroriOS */,
+				37FF48812E58682A00DDCE6A /* BusyMirror */,
+			);
+			name = BusyMirroriOS;
+			productName = BusyMirroriOS;
+			productReference = 5C8E8AC747448DB9D38CB56B /* BusyMirroriOS.app */;
+			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
@@ -216,6 +301,7 @@
 				37FF487E2E58682A00DDCE6A /* BusyMirror */,
 				37FF488C2E58682D00DDCE6A /* BusyMirrorTests */,
 				37FF48962E58682D00DDCE6A /* BusyMirrorUITests */,
+				886286D0D97B98EEDA19305F /* BusyMirroriOS */,
 			);
 		};
 /* End PBXProject section */
@@ -242,6 +328,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BC27F4837D2B49B705AE1932 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -260,6 +353,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		37FF48932E58682D00DDCE6A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DF6192D38814B2DF9D216B3D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -422,7 +522,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-                MARKETING_VERSION = 1.10.1;
+				MARKETING_VERSION = 1.10.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirror;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -454,7 +554,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-                MARKETING_VERSION = 1.10.1;
+				MARKETING_VERSION = 1.10.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirror;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -527,6 +627,47 @@
 			};
 			name = Release;
 		};
+		52E6014581E0C01AD62AFE18 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P32JC2N6Y9;
+				INFOPLIST_FILE = BusyMirroriOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirroriOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D5C2781FD4B2F2DD3395D884 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P32JC2N6Y9;
+				INFOPLIST_FILE = BusyMirroriOS/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cqrenet.BusyMirroriOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -562,6 +703,15 @@
 			buildConfigurations = (
 				37FF48A82E58682D00DDCE6A /* Debug */,
 				37FF48A92E58682D00DDCE6A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD4C1754D82402A61F53C79A /* Build configuration list for PBXNativeTarget "BusyMirroriOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D5C2781FD4B2F2DD3395D884 /* Release */,
+				52E6014581E0C01AD62AFE18 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

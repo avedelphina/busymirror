@@ -1,6 +1,11 @@
 import Foundation
 import EventKit
 
+enum OverlapMode: String, CaseIterable, Identifiable, Codable {
+    case allow, skipCovered, fillGaps
+    var id: String { rawValue }
+}
+
 struct MirrorConfig {
     let daysBack: Int
     let daysForward: Int

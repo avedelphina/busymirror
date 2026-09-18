@@ -6,7 +6,7 @@ enum AppLogStore {
 
     static let logDirectoryURL: URL = {
         let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library", isDirectory: true)
+            ?? FileManager.default.temporaryDirectory
         return base.appendingPathComponent("Logs/BusyMirror", isDirectory: true)
     }()
 

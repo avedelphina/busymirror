@@ -6,7 +6,7 @@
 
 **BusyMirror** is a macOS utility (standard app + menu bar extra) that mirrors calendar events from a source calendar into one or more target calendars, creating busy-placeholder events so availability stays consistent across accounts and devices.
 
-It is a single-platform macOS app written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The app runs as a standard app (Dock icon, ⌘Q) and also has a `MenuBarExtra` for quick sync/status.
+It is written in **Swift 5** and **SwiftUI**, using **EventKit** to read and write calendar data. The macOS app runs as a standard app (Dock icon, ⌘Q) and also has a `MenuBarExtra` for quick sync/status. An iOS/iPadOS app is being scaffolded as a **separate, standalone target** — not a Mac companion (no Handoff, no cross-device state sync) — sharing only the platform-neutral engine files. See "iOS/iPadOS target" below and `ROADMAP.md`.
 
 Key capabilities:
 - Manual or route-driven multi-source mirroring
@@ -56,6 +56,26 @@ BusyMirrorUITests/               # UI tests (empty)
 **Architecture note:** `ContentView.swift` handles the SwiftUI view hierarchy, settings serialization, CLI argument parsing, `launchd` scheduling, and logging. The EventKit mirror engine lives in `MirrorEngine.swift` and is invoked from `ContentView` via `makeEngine()`. Pure helper logic (block math, filters, URL utilities) has been extracted into standalone files for testability.
 
 When making changes, keep the existing data flow (`@EnvironmentObject`, `@AppStorage`, `@State`) intact in `ContentView.swift`.
+
+## iOS/iPadOS target
+
+`BusyMirroriOS` is a second app target in the same `BusyMirror.xcodeproj` (iOS 17.0+, iPhone + iPad). It is **not** a Mac companion — standalone app, own local routes, own EventKit access, no iCloud/CloudKit/Handoff sync with the Mac app (deliberate decision, see `ROADMAP.md`).
+
+```
+BusyMirroriOS/
+├── BusyMirroriOSApp.swift   # App entry point (plain WindowGroup, no MenuBarExtra)
+├── ContentView.swift        # iOS UI — currently a placeholder (source/target picker + Sync Now)
+└── Info.plist                # NSCalendarsFullAccessUsageDescription + iOS-only keys
+```
+
+The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`. These must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
+
+Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`) is excluded from the iOS target and stays Mac-only.
+
+Build/test the iOS target from the command line (no simulator runtime required — this builds against the device SDK with signing disabled):
+```
+xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build
+```
 
 ## Build and Release Commands
 
