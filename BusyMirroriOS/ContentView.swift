@@ -1,15 +1,28 @@
 import SwiftUI
 import EventKit
 
+private enum RouteSheet: Identifiable {
+    case add
+    case edit(index: Int, route: Route)
+
+    var id: String {
+        switch self {
+        case .add: return "add"
+        case .edit(let index, _): return "edit-\(index)"
+        }
+    }
+}
+
 struct ContentView: View {
     private let routeStore = RouteStore.shared
 
     @State private var calendars: [EKCalendar] = []
     @State private var routes: [Route] = []
     @State private var accessError: String?
-    @State private var showingAddRoute = false
+    @State private var sheet: RouteSheet?
     @State private var runningRouteID: Route.ID?
     @State private var logLines: [String] = []
+    @State private var lastSyncDate: Date?
 
     var body: some View {
         NavigationStack {
@@ -18,12 +31,24 @@ struct ContentView: View {
                     Section { Text(accessError).foregroundStyle(.red) }
                 }
 
+                Section {
+                    if let lastSyncDate {
+                        Text("Last synced \(lastSyncDate.formatted(.relative(presentation: .named)))")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Never synced").foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Routes") {
                     if routes.isEmpty {
                         Text("No routes yet. Tap + to add one.").foregroundStyle(.secondary)
                     }
-                    ForEach(routes) { route in
+                    ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
                         routeRow(route)
+                            .swipeActions(edge: .leading) {
+                                Button("Edit") { sheet = .edit(index: index, route: route) }.tint(.blue)
+                            }
                     }
                     .onDelete { indexSet in
                         routes.remove(atOffsets: indexSet)
@@ -42,19 +67,28 @@ struct ContentView: View {
             .navigationTitle("BusyMirror")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showingAddRoute = true } label: { Image(systemName: "plus") }
+                    Button { sheet = .add } label: { Image(systemName: "plus") }
                         .disabled(calendars.isEmpty)
                 }
             }
-            .sheet(isPresented: $showingAddRoute) {
-                AddRouteView(calendars: calendars) { route in
-                    routes.append(route)
-                    routeStore.saveRoutes(routes)
+            .sheet(item: $sheet) { mode in
+                switch mode {
+                case .add:
+                    RouteFormView(calendars: calendars, existing: nil) { route in
+                        routes.append(route)
+                        routeStore.saveRoutes(routes)
+                    }
+                case .edit(let index, let route):
+                    RouteFormView(calendars: calendars, existing: route) { updated in
+                        routes[index] = updated
+                        routeStore.saveRoutes(routes)
+                    }
                 }
             }
             .task {
                 await requestAccessAndLoadCalendars()
                 routes = routeStore.loadRoutes()
+                lastSyncDate = routeStore.lastSyncDate
             }
         }
     }
@@ -97,17 +131,28 @@ struct ContentView: View {
         runningRouteID = route.id
         defer { runningRouteID = nil }
         logLines = await routeStore.run(route: route, calendars: calendars)
+        lastSyncDate = routeStore.lastSyncDate
     }
 }
 
-private struct AddRouteView: View {
+private struct RouteFormView: View {
     let calendars: [EKCalendar]
+    let existing: Route?
     let onSave: (Route) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var sourceID: String?
-    @State private var targetIDs = Set<String>()
-    @State private var privacy = true
+    @State private var targetIDs: Set<String>
+    @State private var privacy: Bool
+
+    init(calendars: [EKCalendar], existing: Route?, onSave: @escaping (Route) -> Void) {
+        self.calendars = calendars
+        self.existing = existing
+        self.onSave = onSave
+        _sourceID = State(initialValue: existing?.sourceID)
+        _targetIDs = State(initialValue: existing?.targetIDs ?? [])
+        _privacy = State(initialValue: existing?.privacy ?? true)
+    }
 
     var body: some View {
         NavigationStack {
@@ -137,7 +182,7 @@ private struct AddRouteView: View {
                     Toggle("Hide details (privacy mode)", isOn: $privacy)
                 }
             }
-            .navigationTitle("New Route")
+            .navigationTitle(existing == nil ? "New Route" : "Edit Route")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -149,11 +194,11 @@ private struct AddRouteView: View {
                             sourceID: sourceID,
                             targetIDs: targetIDs,
                             privacy: privacy,
-                            copyNotes: false,
-                            syncReminders: false,
-                            mergeGapHours: 0,
-                            overlap: .allow,
-                            allDay: false
+                            copyNotes: existing?.copyNotes ?? false,
+                            syncReminders: existing?.syncReminders ?? false,
+                            mergeGapHours: existing?.mergeGapHours ?? 0,
+                            overlap: existing?.overlap ?? .allow,
+                            allDay: existing?.allDay ?? false
                         ))
                         dismiss()
                     }

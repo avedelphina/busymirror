@@ -4,6 +4,14 @@
 <dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>BusyMirror needs access to your calendars to create busy placeholders.</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.cqrenet.BusyMirroriOS.refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

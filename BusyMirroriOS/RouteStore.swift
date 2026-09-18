@@ -9,9 +9,14 @@ final class RouteStore {
     static let shared = RouteStore()
 
     private let routesDefaultsKey = "routes.v1"
+    private let lastSyncDefaultsKey = "lastSyncDate.v1"
     let eventStore = EKEventStore()
 
     private init() {}
+
+    var lastSyncDate: Date? {
+        UserDefaults.standard.object(forKey: lastSyncDefaultsKey) as? Date
+    }
 
     func requestAccess() async throws -> Bool {
         try await eventStore.requestFullAccessToEvents()
@@ -69,6 +74,14 @@ final class RouteStore {
             sessionGuard: &sessionGuard,
             isMultiRouteRun: false
         )
+        UserDefaults.standard.set(Date(), forKey: lastSyncDefaultsKey)
         return lines
+    }
+
+    func runAll() async {
+        let cals = calendars()
+        for route in loadRoutes() {
+            await run(route: route, calendars: cals)
+        }
     }
 }

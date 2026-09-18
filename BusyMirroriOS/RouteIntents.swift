@@ -64,12 +64,9 @@ struct RunAllRoutesIntent: AppIntent {
         guard try await store.requestAccess() else {
             return .result(dialog: "Calendar access denied.")
         }
-        let cals = store.calendars()
-        let routes = store.loadRoutes()
-        for route in routes {
-            await store.run(route: route, calendars: cals)
-        }
-        return .result(dialog: "Ran \(routes.count) route(s).")
+        let count = store.loadRoutes().count
+        await store.runAll()
+        return .result(dialog: "Ran \(count) route(s).")
     }
 }
 
