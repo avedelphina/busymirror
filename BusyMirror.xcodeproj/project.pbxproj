@@ -53,17 +53,16 @@
 		41160BA689A7A09F053298F9 /* Exceptions for "BusyMirror" folder in "BusyMirroriOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				MenuBarSupport.swift,
-				ContentView.swift,
+				Assets.xcassets,
 				BusyMirrorApp.swift,
+				CalendarsSectionView.swift,
+				ContentView.swift,
+				Info.plist,
+				LogSectionView.swift,
+				MenuBarSupport.swift,
 				PreferencesView.swift,
 				RoutesSectionView.swift,
-				CalendarsSectionView.swift,
 				ScheduleSectionView.swift,
-				LogSectionView.swift,
-				Info.plist,
-				BusyMirror.entitlements,
-				Assets.xcassets,
 			);
 			target = 886286D0D97B98EEDA19305F /* BusyMirroriOS */;
 		};
@@ -253,8 +252,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				F719228F348F6C5863734173 /* BusyMirroriOS */,
 				37FF48812E58682A00DDCE6A /* BusyMirror */,
+				F719228F348F6C5863734173 /* BusyMirroriOS */,
 			);
 			name = BusyMirroriOS;
 			productName = BusyMirroriOS;
@@ -630,6 +629,8 @@
 		52E6014581E0C01AD62AFE18 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -654,6 +655,8 @@
 		D5C2781FD4B2F2DD3395D884 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
