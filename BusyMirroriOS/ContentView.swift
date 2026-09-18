@@ -47,10 +47,7 @@ struct ContentView: View {
                         Text("No routes yet. Tap + to add one.").foregroundStyle(.secondary)
                     }
                     ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
-                        routeRow(route)
-                            .swipeActions(edge: .leading) {
-                                Button("Edit") { sheet = .edit(index: index, route: route) }.tint(.blue)
-                            }
+                        routeRow(route, index: index)
                     }
                     .onDelete { indexSet in
                         routes.remove(atOffsets: indexSet)
@@ -113,7 +110,7 @@ struct ContentView: View {
         }
     }
 
-    private func routeRow(_ route: Route) -> some View {
+    private func routeRow(_ route: Route, index: Int) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 if let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
@@ -138,6 +135,19 @@ struct ContentView: View {
             } else {
                 Button("Run") { Task { await run(route) } }
                     .buttonStyle(.bordered)
+            }
+            Menu {
+                Button { sheet = .edit(index: index, route: route) } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    routes.remove(at: index)
+                    routeStore.saveRoutes(routes)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
     }
