@@ -5,6 +5,11 @@ entries are the macOS app; iOS/iPadOS entries are tagged `iOS` since the two
 platforms version independently (separate targets, separate feature pace —
 see ROADMAP.md).
 
+## [1.10.2] - 2026-09-18
+
+### Changed
+- **Internal only — no user-visible change on macOS.** `Route`/`MirrorConfig` (shared with the new iOS app) gained per-route prefix mode (Global/Custom/None), a per-route "mirror already-mirrored events" toggle and its "copy chained titles as-is" companion for deliberate multi-hop mirroring across devices, and a marker-based mechanism to preserve an upstream route's prefix under a chained route's own Privacy setting. All default to off/inherit, so every existing Mac route decodes and behaves exactly as before. The Mac UI (`RoutesSectionView`/`PreferencesView`) doesn't expose any of this yet — that's a follow-up.
+
 ## [iOS 1.1.0] - 2026-09-18
 
 ### Added
