@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var lastSyncDate: Date?
     @State private var confirmCleanup = false
     @State private var isCleaningUp = false
+    @State private var showingSettings = false
 
     var body: some View {
         NavigationStack {
@@ -80,6 +81,16 @@ struct ContentView: View {
                     }
                     .disabled(routes.isEmpty || isCleaningUp)
                 }
+                ToolbarItem(placement: .secondaryAction) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsSheet(routeStore: routeStore)
             }
             .confirmationDialog(
                 "Delete mirrored placeholders?",
@@ -179,6 +190,58 @@ struct ContentView: View {
         isCleaningUp = true
         defer { isCleaningUp = false }
         logLines = await routeStore.cleanupAll()
+    }
+}
+
+private struct SettingsSheet: View {
+    let routeStore: RouteStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("🪞 ", text: Binding(
+                        get: { routeStore.titlePrefix },
+                        set: { routeStore.titlePrefix = $0 }
+                    ))
+                } header: {
+                    Text("Mirror Prefix")
+                } footer: {
+                    Text("Prepended to mirrored placeholder event titles.")
+                }
+
+                Section {
+                    TextEditor(text: Binding(
+                        get: { routeStore.excludedTitleFiltersRaw },
+                        set: { routeStore.excludedTitleFiltersRaw = $0 }
+                    ))
+                    .frame(minHeight: 80)
+                } header: {
+                    Text("Skip if title contains")
+                } footer: {
+                    Text("Comma or newline separated. Source events matching any term are skipped when syncing.")
+                }
+
+                Section {
+                    TextEditor(text: Binding(
+                        get: { routeStore.excludedOrganizerFiltersRaw },
+                        set: { routeStore.excludedOrganizerFiltersRaw = $0 }
+                    ))
+                    .frame(minHeight: 80)
+                } header: {
+                    Text("Skip if organizer contains")
+                } footer: {
+                    Text("Comma or newline separated.")
+                }
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 

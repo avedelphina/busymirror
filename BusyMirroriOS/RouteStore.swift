@@ -10,7 +10,6 @@ final class RouteStore {
 
     private let routesDefaultsKey = "routes.v1"
     private let lastSyncDefaultsKey = "lastSyncDate.v1"
-    private let titlePrefix = "🪞 "
     private let placeholderTitle = "Busy"
     let eventStore = EKEventStore()
 
@@ -18,6 +17,27 @@ final class RouteStore {
 
     var lastSyncDate: Date? {
         UserDefaults.standard.object(forKey: lastSyncDefaultsKey) as? Date
+    }
+
+    var titlePrefix: String {
+        get { UserDefaults.standard.string(forKey: "titlePrefix") ?? "🪞 " }
+        set { UserDefaults.standard.set(newValue, forKey: "titlePrefix") }
+    }
+
+    var excludedTitleFiltersRaw: String {
+        get { UserDefaults.standard.string(forKey: "excludedTitleFilters") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "excludedTitleFilters") }
+    }
+
+    var excludedOrganizerFiltersRaw: String {
+        get { UserDefaults.standard.string(forKey: "excludedOrganizerFilters") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "excludedOrganizerFilters") }
+    }
+
+    private func parseFilterTerms(_ raw: String) -> [String] {
+        raw.split { $0 == "\n" || $0 == "," }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
     }
 
     func requestAccess() async throws -> Bool {
@@ -60,8 +80,8 @@ final class RouteStore {
             filterByWorkHours: false,
             workHoursStart: 9,
             workHoursEnd: 17,
-            excludedTitleFilterTerms: [],
-            excludedOrganizerFilterTerms: [],
+            excludedTitleFilterTerms: parseFilterTerms(excludedTitleFiltersRaw),
+            excludedOrganizerFilterTerms: parseFilterTerms(excludedOrganizerFiltersRaw),
             mirrorAcceptedOnly: false,
             autoDeleteMissing: true,
             writeEnabled: true,
