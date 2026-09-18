@@ -48,6 +48,8 @@
 - **Background sync**: `BGAppRefreshTask` wired up (`BusyMirroriOSApp.swift`) — registers on launch, reschedules itself (~1h earliest, OS decides actual timing) whenever the app backgrounds, runs `RouteStore.runAll()` on fire. `BGTaskSchedulerPermittedIdentifiers` + `UIBackgroundModes: [fetch]` added to Info.plist. This is explicitly best-effort per the earlier design discussion — no delivery guarantee, and the UI now says so: a "Last synced X ago" row at the top of the routes list (`RouteStore.lastSyncDate`, updated after every run — manual, Shortcuts, or background) instead of implying live sync.
 - `RunAllRoutesIntent` and the background task both now call the same `RouteStore.runAll()` helper instead of each looping over routes themselves.
 - `GetStatusIntent` added — Shortcuts can now ask for route count + last-sync time, not just trigger a run.
+- Verified working end-to-end on a physical device (route add + sync engine confirmed live, not just build-clean).
+- Route add/edit form now exposes the full per-route option set, matching the Mac app's `RoutesSectionView` wording: Private, Copy description (disabled when Private is on), Sync reminders, Mirror all-day events, Merge gap (hours, stepper), Overlap mode (allow/skipCovered/fillGaps). Previously these were fixed defaults.
 - Still missing: App Store submission prep (Apple Developer/App Store Connect setup, icons, screenshots, privacy policy hosting, review notes — needs account access and product decisions, not just code).
 - Verified: iOS target builds clean (`xcodebuild -target BusyMirroriOS -sdk iphoneos`), Mac target still builds and all 45 existing tests still pass after the `OverlapMode` move.
 

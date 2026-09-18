@@ -144,6 +144,11 @@ private struct RouteFormView: View {
     @State private var sourceID: String?
     @State private var targetIDs: Set<String>
     @State private var privacy: Bool
+    @State private var copyNotes: Bool
+    @State private var syncReminders: Bool
+    @State private var allDay: Bool
+    @State private var mergeGapHours: Int
+    @State private var overlap: OverlapMode
 
     init(calendars: [EKCalendar], existing: Route?, onSave: @escaping (Route) -> Void) {
         self.calendars = calendars
@@ -152,6 +157,11 @@ private struct RouteFormView: View {
         _sourceID = State(initialValue: existing?.sourceID)
         _targetIDs = State(initialValue: existing?.targetIDs ?? [])
         _privacy = State(initialValue: existing?.privacy ?? true)
+        _copyNotes = State(initialValue: existing?.copyNotes ?? false)
+        _syncReminders = State(initialValue: existing?.syncReminders ?? false)
+        _allDay = State(initialValue: existing?.allDay ?? false)
+        _mergeGapHours = State(initialValue: existing?.mergeGapHours ?? 0)
+        _overlap = State(initialValue: existing?.overlap ?? .allow)
     }
 
     var body: some View {
@@ -179,7 +189,27 @@ private struct RouteFormView: View {
                     }
                 }
                 Section {
-                    Toggle("Hide details (privacy mode)", isOn: $privacy)
+                    Toggle("Private", isOn: $privacy)
+                    Toggle("Copy description", isOn: $copyNotes)
+                        .disabled(privacy)
+                    Toggle("Sync reminders", isOn: $syncReminders)
+                    Toggle("Mirror all-day events", isOn: $allDay)
+                } footer: {
+                    Text("Private mirrors as a placeholder with no details. If off, the source title (and optionally description) is copied.")
+                }
+                Section {
+                    Stepper(value: $mergeGapHours, in: 0...24) {
+                        Text("Merge gap: \(mergeGapHours)h")
+                    }
+                    Picker("Overlap mode", selection: $overlap) {
+                        ForEach(OverlapMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                } header: {
+                    Text("Overlap")
+                } footer: {
+                    Text("Merge gap: merge adjacent source events separated by ≤ this many hours. Overlap — allow: always place; skipCovered: skip if target already covers the time; fillGaps: only fill uncovered gaps.")
                 }
             }
             .navigationTitle(existing == nil ? "New Route" : "Edit Route")
@@ -194,11 +224,11 @@ private struct RouteFormView: View {
                             sourceID: sourceID,
                             targetIDs: targetIDs,
                             privacy: privacy,
-                            copyNotes: existing?.copyNotes ?? false,
-                            syncReminders: existing?.syncReminders ?? false,
-                            mergeGapHours: existing?.mergeGapHours ?? 0,
-                            overlap: existing?.overlap ?? .allow,
-                            allDay: existing?.allDay ?? false
+                            copyNotes: copyNotes,
+                            syncReminders: syncReminders,
+                            mergeGapHours: mergeGapHours,
+                            overlap: overlap,
+                            allDay: allDay
                         ))
                         dismiss()
                     }
