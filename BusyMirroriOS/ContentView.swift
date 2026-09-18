@@ -1,6 +1,15 @@
 import SwiftUI
 import EventKit
 
+@ViewBuilder
+private func mirrorBadge(for cal: EKCalendar, in calendarsWithMirrors: Set<String>) -> some View {
+    if calendarsWithMirrors.contains(cal.calendarIdentifier) {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .help("This calendar already contains mirrored placeholder events")
+    }
+}
+
 private enum RouteSheet: Identifiable {
     case add
     case edit(index: Int, route: Route)
@@ -27,6 +36,7 @@ struct ContentView: View {
     @State private var isCleaningUp = false
     @State private var showingSettings = false
     @State private var isSyncingAll = false
+    @State private var calendarsWithMirrors: Set<String> = []
 
     var body: some View {
         NavigationStack {
@@ -118,12 +128,12 @@ struct ContentView: View {
             .sheet(item: $sheet) { mode in
                 switch mode {
                 case .add:
-                    RouteFormView(calendars: calendars, existing: nil) { route in
+                    RouteFormView(calendars: calendars, existing: nil, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors) { route in
                         routes.append(route)
                         routeStore.saveRoutes(routes)
                     }
                 case .edit(let index, let route):
-                    RouteFormView(calendars: calendars, existing: route) { updated in
+                    RouteFormView(calendars: calendars, existing: route, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors) { updated in
                         routes[index] = updated
                         routeStore.saveRoutes(routes)
                     }
@@ -133,6 +143,7 @@ struct ContentView: View {
                 await requestAccessAndLoadCalendars()
                 routes = routeStore.loadRoutes()
                 lastSyncDate = routeStore.lastSyncDate
+                calendarsWithMirrors = routeStore.calendarsContainingMirrors(calendars)
             }
         }
     }
@@ -140,16 +151,22 @@ struct ContentView: View {
     private func routeRow(_ route: Route, index: Int) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                if let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
-                    calChip(source).font(.subheadline)
-                } else {
-                    Text("Unknown source").font(.subheadline)
+                HStack(spacing: 4) {
+                    Text(route.titlePrefix ?? routeStore.titlePrefix)
+                    if let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) {
+                        calChip(source)
+                        mirrorBadge(for: source, in: calendarsWithMirrors)
+                    } else {
+                        Text("Unknown source")
+                    }
                 }
+                .font(.subheadline)
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
                     ForEach(route.targetIDs.sorted(), id: \.self) { id in
                         if let target = calendars.first(where: { $0.calendarIdentifier == id }) {
                             calChip(target)
+                            mirrorBadge(for: target, in: calendarsWithMirrors)
                         }
                     }
                 }
@@ -269,6 +286,8 @@ private struct SettingsSheet: View {
 private struct RouteFormView: View {
     let calendars: [EKCalendar]
     let existing: Route?
+    let globalPrefix: String
+    let calendarsWithMirrors: Set<String>
     let onSave: (Route) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -280,10 +299,13 @@ private struct RouteFormView: View {
     @State private var allDay: Bool
     @State private var mergeGapHours: Int
     @State private var overlap: OverlapMode
+    @State private var titlePrefixText: String
 
-    init(calendars: [EKCalendar], existing: Route?, onSave: @escaping (Route) -> Void) {
+    init(calendars: [EKCalendar], existing: Route?, globalPrefix: String, calendarsWithMirrors: Set<String>, onSave: @escaping (Route) -> Void) {
         self.calendars = calendars
         self.existing = existing
+        self.globalPrefix = globalPrefix
+        self.calendarsWithMirrors = calendarsWithMirrors
         self.onSave = onSave
         _sourceID = State(initialValue: existing?.sourceID)
         _targetIDs = State(initialValue: existing?.targetIDs ?? [])
@@ -293,18 +315,27 @@ private struct RouteFormView: View {
         _allDay = State(initialValue: existing?.allDay ?? false)
         _mergeGapHours = State(initialValue: existing?.mergeGapHours ?? 0)
         _overlap = State(initialValue: existing?.overlap ?? .allow)
+        _titlePrefixText = State(initialValue: existing?.titlePrefix ?? "")
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Source") {
+                Section {
                     Picker("Source calendar", selection: $sourceID) {
                         Text("None").tag(String?.none)
                         ForEach(calendars, id: \.calendarIdentifier) { cal in
-                            calChip(cal).tag(Optional(cal.calendarIdentifier))
+                            HStack {
+                                calChip(cal)
+                                mirrorBadge(for: cal, in: calendarsWithMirrors)
+                            }
+                            .tag(Optional(cal.calendarIdentifier))
                         }
                     }
+                } header: {
+                    Text("Source")
+                } footer: {
+                    Text("⚠️ marks a calendar that already contains mirrored events — likely a target from another route or device.")
                 }
                 Section("Targets") {
                     ForEach(calendars, id: \.calendarIdentifier) { cal in
@@ -316,10 +347,20 @@ private struct RouteFormView: View {
                                     else { targetIDs.remove(cal.calendarIdentifier) }
                                 }
                             )) {
-                                calChip(cal)
+                                HStack {
+                                    calChip(cal)
+                                    mirrorBadge(for: cal, in: calendarsWithMirrors)
+                                }
                             }
                         }
                     }
+                }
+                Section {
+                    TextField(globalPrefix, text: $titlePrefixText)
+                } header: {
+                    Text("Prefix override")
+                } footer: {
+                    Text("Leave blank to use the global mirror prefix (\(globalPrefix)) set in Settings.")
                 }
                 Section {
                     Toggle("Private", isOn: $privacy)
@@ -361,7 +402,8 @@ private struct RouteFormView: View {
                             syncReminders: syncReminders,
                             mergeGapHours: mergeGapHours,
                             overlap: overlap,
-                            allDay: allDay
+                            allDay: allDay,
+                            titlePrefix: titlePrefixText.isEmpty ? nil : titlePrefixText
                         ))
                         dismiss()
                     }

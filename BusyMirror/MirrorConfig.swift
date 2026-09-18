@@ -16,9 +16,10 @@ struct Route: Identifiable, Hashable, Codable {
     var mergeGapHours: Int         // per-route merge gap (hours)
     var overlap: OverlapMode       // per-route overlap behavior
     var allDay: Bool               // per-route mirror all-day
-    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay }
+    var titlePrefix: String?       // per-route prefix override; nil = use the app's global prefix
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix }
 
-    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool) {
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil) {
         self.sourceID = sourceID
         self.targetIDs = targetIDs
         self.privacy = privacy
@@ -27,6 +28,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.mergeGapHours = mergeGapHours
         self.overlap = overlap
         self.allDay = allDay
+        self.titlePrefix = titlePrefix
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +41,7 @@ struct Route: Identifiable, Hashable, Codable {
         self.mergeGapHours = try c.decode(Int.self, forKey: .mergeGapHours)
         self.overlap = try c.decode(OverlapMode.self, forKey: .overlap)
         self.allDay = try c.decode(Bool.self, forKey: .allDay)
+        self.titlePrefix = try c.decodeIfPresent(String.self, forKey: .titlePrefix)
     }
 }
 
