@@ -1,6 +1,24 @@
 # Changelog
 
-All notable changes to BusyMirror will be documented in this file.
+All notable changes to BusyMirror will be documented in this file. Unmarked
+entries are the macOS app; iOS/iPadOS entries are tagged `iOS` since the two
+platforms version independently (separate targets, separate feature pace —
+see ROADMAP.md).
+
+## [iOS 1.1.0] - 2026-09-18
+
+### Added
+- **Standalone iOS/iPadOS app** (`BusyMirroriOS` target) — not a Mac companion, no Handoff/CloudKit sync, own local routes and EventKit access. First TestFlight build.
+- Routes: add/edit/delete with the full per-route option set (Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode), discoverable via both a visible ⋯ menu and swipe gestures.
+- Calendar color chips (`calLabel`/`calChip`, shared with the Mac app) to distinguish same-named calendars across accounts.
+- Clean Up Placeholders, Sync All, and a "Last synced" indicator — matching the Mac app's toolbar actions.
+- Shortcuts support: run one route, run all routes, or ask for status, via App Intents.
+- Best-effort background sync via `BGAppRefreshTask` (no delivery guarantee — foreground/Shortcuts-triggered sync is the reliable path).
+- Settings: editable mirror prefix, title/organizer skip filters.
+- **Chained mirroring**: per-route "Mirror already-mirrored events" (bypasses the loop-guard for deliberate multi-hop routing across devices) and "Copy chained titles as-is" (avoids prefix stacking, e.g. `B: A: Meeting`) — the latter preserves an upstream route's prefix under this route's own Privacy setting via an invisible title marker, so a chained event and a native event on the same source calendar can still get different prefixes.
+- Per-route prefix mode: Global / Custom / None.
+- Cross-device "already mirrored" detection (⚠️ badge on calendars already containing mirror-tagged events from any app/device) — useful since Mac and iOS have separate, unsynced calendar sets.
+- Real app icon ("privacy mirror" design).
 
 ## [1.10.1] - 2026-09-04
 
