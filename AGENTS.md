@@ -95,6 +95,8 @@ The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchro
 
 Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`) is excluded from the iOS target and stays Mac-only.
 
+The public TestFlight beta link is in `README.md` under "Get it" — update it there if the beta group or link ever changes.
+
 Build/test the iOS target from the command line (no simulator runtime required — this builds against the device SDK with signing disabled):
 ```
 xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build

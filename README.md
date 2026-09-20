@@ -6,6 +6,10 @@ There's a macOS app and a separate, standalone iOS/iPadOS app (own routes, own c
 
 On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also has a menu bar icon for quick sync/status without opening the main window.
 
+## Get it
+- **macOS (15.5+)** — download the latest signed and notarized build from [Releases](https://github.com/avedelphina/busymirror/releases/latest), unzip it, and drag `BusyMirror.app` to Applications.
+- **iPhone / iPad (public beta, iOS/iPadOS 17+)** — [join the beta on TestFlight](https://testflight.apple.com/join/MRBKZ4t3). You'll need Apple's free TestFlight app. It's a beta: builds expire after 90 days (TestFlight will offer the next one), and you can send feedback or crash reports straight from TestFlight. Not on the App Store yet.
+
 ## What it does (current)
 - Route-driven mirroring (multi-source): define Source → Targets routes and run them in one go.
 - Manual selection mirroring: pick a source and targets in the UI and run.
@@ -97,7 +101,7 @@ Each route's prefix can also be set independently: inherit the global prefix, a 
 ### Build
 - Open `BusyMirror.xcodeproj`, scheme `BusyMirroriOS`, destination = a real device (run) or **Any iOS Device (arm64)** (archive).
 - Command line (no simulator needed): `xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`
-- Distribution is via TestFlight (internal or external testers), not yet on the App Store.
+- Distribution: the public TestFlight beta (link under [Get it](#get-it)); not on the App Store yet.
 
 ## macOS vs iOS
 
