@@ -216,8 +216,10 @@ final class BusyMirrorAppController: ObservableObject {
             guard !targets.isEmpty else { continue }
             ranAnyRoute = true
             let config = MirrorConfig(
-                daysBack: settings.daysBack,
-                daysForward: settings.daysForward,
+                // Live @AppStorage keys, not the saved blob: nothing re-saves the blob when only a
+                // *default* changes, so it can still hold the old default while the UI uses the new one.
+                daysBack: (UserDefaults.standard.object(forKey: "daysBack") as? Int) ?? defaultSyncDaysBack,
+                daysForward: (UserDefaults.standard.object(forKey: "daysForward") as? Int) ?? defaultSyncDaysForward,
                 mergeGapMin: max(0, route.mergeGapHours * 60),
                 hideDetails: route.privacy,
                 copyDescription: route.copyNotes,

@@ -8,8 +8,8 @@ import SwiftUI
 struct PreferencesView: View {
     @EnvironmentObject private var appController: BusyMirrorAppController
 
-    @AppStorage("daysForward") private var daysForward: Int = 7
-    @AppStorage("daysBack") private var daysBack: Int = 1
+    @AppStorage("daysForward") private var daysForward: Int = defaultSyncDaysForward
+    @AppStorage("daysBack") private var daysBack: Int = defaultSyncDaysBack
     @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
 
     @AppStorage("hideDetails") private var hideDetails: Bool = true
@@ -60,13 +60,13 @@ struct PreferencesView: View {
             Section("Default time window") {
                 HStack {
                     Text("Days back")
-                    TextField("1", value: $daysBack, formatter: Self.intFormatter)
+                    TextField("\(defaultSyncDaysBack)", value: $daysBack, formatter: Self.intFormatter)
                         .frame(width: 64)
                 }
                 .disabled(disabled)
                 HStack {
                     Text("Days forward")
-                    TextField("7", value: $daysForward, formatter: Self.intFormatter)
+                    TextField("\(defaultSyncDaysForward)", value: $daysForward, formatter: Self.intFormatter)
                         .frame(width: 64)
                 }
                 .disabled(disabled)

@@ -1,6 +1,11 @@
 import Foundation
 import EventKit
 
+// Default sync window, shared so both apps agree. (Mac lets you change it in Preferences;
+// iOS uses these fixed until it gets the same setting.)
+let defaultSyncDaysBack = 1
+let defaultSyncDaysForward = 14
+
 enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     case allow, skipCovered, fillGaps
     var id: String { rawValue }

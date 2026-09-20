@@ -83,8 +83,8 @@ final class RouteStore {
         let engine = MirrorEngine(log: { lines.append($0) })
         engine.onPlannedChange = onChange
         let config = MirrorConfig(
-            daysBack: 1,
-            daysForward: 14,
+            daysBack: defaultSyncDaysBack,
+            daysForward: defaultSyncDaysForward,
             mergeGapMin: route.mergeGapHours * 60,
             hideDetails: route.privacy,
             copyDescription: route.copyNotes,
@@ -139,8 +139,8 @@ final class RouteStore {
         let engine = MirrorEngine(log: { lines.append($0) })
         await engine.runCleanup(
             store: eventStore,
-            daysBack: 1,
-            daysForward: 14,
+            daysBack: defaultSyncDaysBack,
+            daysForward: defaultSyncDaysForward,
             sourceCalendar: source,
             targetCalendars: targets,
             titlePrefix: route.titlePrefix ?? titlePrefix,

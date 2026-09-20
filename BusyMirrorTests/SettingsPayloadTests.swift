@@ -45,6 +45,20 @@ final class SettingsPayloadTests: XCTestCase {
         XCTAssertNil(payload.selectedTargetIDs)
     }
 
+    func testMissingSyncWindowFallsBackToSharedDefault() throws {
+        // A blob with no window keys must decode to the one shared default (both apps agree on
+        // it), not a stale literal — the Mac default used to be 7 days forward and iOS's 14.
+        let json = """
+        {"mergeGapHours":0,"hideDetails":true,"copyDescription":false,"mirrorAllDay":false,
+         "overlapMode":"allow","titlePrefix":"🪞 ","placeholderTitle":"Busy",
+         "autoDeleteMissing":true,"routes":[]}
+        """.data(using: .utf8)!
+        let payload = try JSONDecoder().decode(ContentView.SettingsPayload.self, from: json)
+        XCTAssertEqual(payload.daysBack, defaultSyncDaysBack)
+        XCTAssertEqual(payload.daysForward, defaultSyncDaysForward)
+        XCTAssertEqual(defaultSyncDaysForward, 14)
+    }
+
     func testEncodeDecodeRoundTrip() throws {
         let route = Route(sourceID: "a", targetIDs: ["b"], privacy: true, copyNotes: false, syncReminders: true, mergeGapHours: 1, overlap: .allow, allDay: false)
         let original = ContentView.SettingsPayload(

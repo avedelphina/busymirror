@@ -5,6 +5,28 @@ entries are the macOS app; iOS/iPadOS entries are tagged `iOS` since the two
 platforms version independently (separate targets, separate feature pace —
 see ROADMAP.md).
 
+## [Unreleased]
+
+Collects changes until a release renames this heading (and bumps the version).
+
+### macOS
+#### Added
+- **Preview**: a Preview button on each route card, and "Preview all" in the routes header, lists every event Sync Now would create, update or delete — old → new title and time, grouped by target calendar and day — without writing anything.
+- **Per-route prefix** (Global / Custom / None) on each route card, and opt-in **chained mirroring** ("Mirror already-mirrored events", "Copy chained titles as-is") for multi-hop setups across devices. Manual runs, background auto-sync and per-route cleanup all honor a route's own prefix.
+- A "has mirrors" tag next to calendars that already contain mirrored events (from any app or device).
+
+#### Changed
+- **Sync Now now starts in Write mode** (it used to start in Dry Run). Use Preview to see what would happen first; the Dry Run switch is still in the toolbar. The command line is unchanged: it still does nothing unless you pass `--write 1`.
+- **The default sync window is now 1 day back / 14 days forward** (it was 7 forward). This applies if you never set the window yourself — an explicitly chosen value is kept. Background auto-sync now reads the live setting, so it can't lag behind the window shown in Preferences.
+- Dry-run/Preview now behaves like a real run for the overlap modes (`skipCovered`, `fillGaps`) and for events with identical times, and its summary line reports `created=N` instead of always `created=0`.
+
+### iOS
+#### Added
+- **Preview** in the route add/edit form (works on the unsaved settings) and in a saved route's ⋯ menu — the same verbatim change list as macOS.
+
+#### Changed
+- The calendar tag is now a neutral "has mirrors" label instead of a warning triangle (which read as "something is wrong with this calendar"), and no longer appears on a route's own targets, which hold its mirrors by design.
+
 ## [1.10.2] - 2026-09-18
 
 ### Changed

@@ -10,7 +10,7 @@ On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also h
 - Route-driven mirroring (multi-source): define Source → Targets routes and run them in one go.
 - Manual selection mirroring: pick a source and targets in the UI and run.
 - Privacy: **Private** mode hides details — mirrors a placeholder with prefix + placeholder title (e.g., "🪞 Busy"). With Private off, the source title (and optionally its description) is mirrored instead. There is no option to flag mirrored events as "private" on the calendar server: EventKit has no public API for it.
-- DRY-RUN mode: see what would be created/updated/deleted without writing.
+- Sync Now starts in **Write** mode. To see what would happen first, use **Preview** (below); a Dry Run switch in the toolbar is still there, mainly for manual-selection mode, which has no route to preview.
 - Activity Log in the app plus persistent file logging on disk.
 - In-app scheduling: install or remove a `launchd` LaunchAgent from the `Scheduled runs` section.
 - Menu bar controls: trigger `Sync Now`, open the main window, open Preferences, or quit.
@@ -116,27 +116,27 @@ Legend: ✅ has it · ❌ missing — a parity gap · — not applicable (platfo
 | Calendar color chips | ✅ | ✅ |
 | Global mirror prefix, title/organizer skip filters | ✅ Preferences | ✅ Settings |
 | Editable placeholder title | ✅ | ❌ fixed "Busy" |
-| Sync window (days back / forward) | ✅ | ❌ fixed 1 back / 14 forward |
+| Sync window (days back / forward) | ✅ default 1 / 14 | ❌ fixed 1 / 14 |
 | Work Hours filter | ✅ | ❌ |
 | Accepted-only filter | ✅ | ❌ |
 | Toggle for auto-deleting mirrors whose source disappeared | ✅ | ❌ always on |
 | Defaults for newly added routes | ✅ Preferences | ❌ fixed |
-| Import / Export settings JSON | ✅ | ❌ |
+| Import / Export settings JSON | ✅ same-machine backup | — not planned (see below) |
 | Activity log | ✅ dedicated view + rotating log file | partial — the last run's log in the main list |
 | Shortcuts / Siri (App Intents) | ❌ | ✅ |
 | Manual source/target selection | ✅ | — routes only |
-| Dry-run mode | ✅ (the default) | — use Preview |
+| Dry-run switch | ✅ optional (Sync Now starts in Write) | — use Preview |
 | CLI, `launchd` schedule | ✅ | — |
 | Menu bar | ✅ | — |
 | Automatic sync | ✅ event-driven (see below) | best-effort only (see below) |
 
 ### Behavior differences that can surprise you
-- **Sync horizon.** Mac defaults to 1 day back / 7 forward and lets you change it; iOS is fixed at 1 back / 14 forward. The same route can therefore mirror a different span of time on each device.
-- **Write vs. dry-run.** Mac starts in **Dry Run** — you switch to Write to change calendars. On iOS, **Run writes immediately**; use Preview first (a new route's Preview button works before you even save it).
+- **Sync horizon.** Both apps default to 1 day back / 14 forward. Mac lets you change it in Preferences; iOS is fixed until it gets the same setting, so a Mac with a customized window can mirror a different span than your iPhone.
+- **Both apps write by default.** Sync Now on Mac and Run on iOS change calendars immediately. Use Preview first — on Mac from a route card or "Preview all", on iOS from a new route's form (it works before you even save) or a saved route's ⋯ menu. Mac also keeps an optional Dry Run switch; the command line is different and stays safe: it does nothing unless you pass `--write 1`.
 - **Automatic sync.** Mac watches for calendar changes (debounced), also syncs on wake, runs as a login item with a 30-minute fallback timer, and can be scheduled or scripted. iOS has no persistent process: it syncs when opened, from a Shortcuts automation, or via a background refresh that iOS runs at its own discretion — no guarantee it runs at all. iOS shows "Last synced" so it never implies live sync.
 - **Filters.** Mac can skip events outside Work Hours or that you haven't accepted; iOS mirrors every event in the window (only the title/organizer skip filters apply).
 - **Placeholder title.** Mac's is editable (default "Busy"); iOS always uses "Busy". If both apps mirror into the same calendar, keep Mac's at the default or the placeholders will differ.
-- **Routes and settings are per device and can't be moved between devices.** Calendar identifiers are local to each device's calendar database, so a route exported from one device generally won't resolve on another. Mac's Import/Export is a same-machine backup, not a way to copy routes to your iPhone.
+- **Routes and settings are per device and can't be moved between devices.** Calendar identifiers are local to each device's calendar database, so a route file from another device generally won't resolve — and Mac drops routes whose calendars it can't find at its next calendar reload. Mac's Import/Export is therefore a same-machine backup, not a way to copy routes to your iPhone, and iOS deliberately has no equivalent.
 - **Run scope.** Mac's Sync Now runs all routes as one run with a shared loop-guard; iOS runs each route on its own (Sync All loops over them). Results are the same unless two routes would mirror the same event into the same target.
 
 ## Roadmap

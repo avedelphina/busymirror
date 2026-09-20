@@ -57,8 +57,8 @@ struct ContentView: View {
     @State private var routes: [Route] = []
     @State private var selectedSection: SidebarSection? = .routes
     @State private var manualSelectionExpanded = false
-    @AppStorage("daysForward") private var daysForward: Int = 7
-    @AppStorage("daysBack") private var daysBack: Int = 1
+    @AppStorage("daysForward") private var daysForward: Int = defaultSyncDaysForward
+    @AppStorage("daysBack") private var daysBack: Int = defaultSyncDaysBack
     @AppStorage("mergeGapHours") private var mergeGapHours: Int = 0
     private var mergeGapMin: Int { max(0, mergeGapHours * 60) }
     @AppStorage("hideDetails") private var hideDetails: Bool = true        // Privacy ON by default -> use "Busy"
@@ -81,7 +81,7 @@ struct ContentView: View {
         get { OverlapMode(rawValue: overlapModeRaw) ?? .allow }
         nonmutating set { overlapModeRaw = newValue.rawValue }
     }
-    @State private var writeEnabled = false            // dry-run unless checked
+    @State private var writeEnabled = true             // Preview (per route / all routes) covers "what would happen"; Dry Run stays available for manual-selection mode
     @State private var logText = "Ready."
     @State private var isRunning = false
     @State private var isCLIRun = false
@@ -1087,7 +1087,9 @@ struct ContentView: View {
         hideDetails = boolArg("--privacy", default: hideDetails)
         copyDescription = boolArg("--copy-notes", default: copyDescription)
         syncReminders = boolArg("--sync-reminders", default: syncReminders)
-        writeEnabled = boolArg("--write", default: writeEnabled)
+        // Not `default: writeEnabled`: the UI now starts in Write, but scripted runs must stay dry-run
+        // unless --write 1 is passed (the documented CLI default).
+        writeEnabled = boolArg("--write", default: false)
         mirrorAllDay = boolArg("--all-day", default: mirrorAllDay)
         daysForward = intArg("--days-forward", default: daysForward)
         daysBack = intArg("--days-back", default: daysBack)
@@ -1346,8 +1348,8 @@ struct ContentView: View {
         // the 1.5.1 -> 1.6.0 upgrade when `syncReminders` was added).
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            daysBack = try c.decodeIfPresent(Int.self, forKey: .daysBack) ?? 1
-            daysForward = try c.decodeIfPresent(Int.self, forKey: .daysForward) ?? 7
+            daysBack = try c.decodeIfPresent(Int.self, forKey: .daysBack) ?? defaultSyncDaysBack
+            daysForward = try c.decodeIfPresent(Int.self, forKey: .daysForward) ?? defaultSyncDaysForward
             mergeGapHours = try c.decodeIfPresent(Int.self, forKey: .mergeGapHours) ?? 0
             hideDetails = try c.decodeIfPresent(Bool.self, forKey: .hideDetails) ?? true
             copyDescription = try c.decodeIfPresent(Bool.self, forKey: .copyDescription) ?? false
