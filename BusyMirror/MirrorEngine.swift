@@ -72,6 +72,10 @@ final class MirrorEngine {
     private let log: (String) -> Void
     private let mirrorIndexDefaultsKey = "mirror-index.v1"
 
+    // Called once per change a dry run (writeEnabled == false) would make — the structured
+    // twin of the "WOULD ..." log lines. Never called for real writes.
+    var onPlannedChange: ((PlannedChange) -> Void)?
+
     init(log: @escaping (String) -> Void) {
         self.log = log
     }
@@ -356,19 +360,23 @@ final class MirrorEngine {
                 return offsetsA == offsetsB
             }
 
-            func needsUpdate(existing: EKEvent, blk: Block, displayTitle: String, desiredNotes: String?, desiredURL: URL?) -> Bool {
+            // Empty means the existing mirror is already up to date.
+            func updateReasons(existing: EKEvent, blk: Block, displayTitle: String, desiredNotes: String?, desiredURL: URL?) -> [PlannedChange.Reason] {
+                var reasons: [PlannedChange.Reason] = []
                 let curS = existing.startDate ?? blk.start
                 let curE = existing.endDate ?? blk.end
-                if abs(curS.timeIntervalSince(blk.start)) > SAME_TIME_TOL_MIN * 60 { return true }
-                if abs(curE.timeIntervalSince(blk.end)) > SAME_TIME_TOL_MIN * 60 { return true }
-                if (existing.title ?? "") != displayTitle { return true }
-                if (existing.notes ?? "") != (desiredNotes ?? "") { return true }
-                if existing.isAllDay { return true }
-                if (existing.url?.absoluteString ?? "") != (desiredURL?.absoluteString ?? "") { return true }
-                let newAlarms = desiredAlarms(for: blk)
-                let existingAlarms = existing.alarms ?? []
-                if !alarmsEqual(newAlarms, existingAlarms) { return true }
-                return false
+                if abs(curS.timeIntervalSince(blk.start)) > SAME_TIME_TOL_MIN * 60 ||
+                    abs(curE.timeIntervalSince(blk.end)) > SAME_TIME_TOL_MIN * 60 {
+                    reasons.append(.time)
+                }
+                if let titleReason = titleChangeReason(existing: existing.title ?? "", desired: displayTitle) {
+                    reasons.append(titleReason)
+                }
+                if (existing.notes ?? "") != (desiredNotes ?? "") { reasons.append(.notes) }
+                if existing.isAllDay { reasons.append(.allDay) }
+                if (existing.url?.absoluteString ?? "") != (desiredURL?.absoluteString ?? "") { reasons.append(.link) }
+                if !alarmsEqual(desiredAlarms(for: blk), existing.alarms ?? []) { reasons.append(.reminders) }
+                return reasons
             }
 
             func createOrUpdateIfNeeded(_ blk: Block) async {
@@ -419,7 +427,8 @@ final class MirrorEngine {
                     let curS = existing.startDate ?? blk.start
                     let curE = existing.endDate ?? blk.end
                     rememberMirrorEvent(existing, for: blk)
-                    if !needsUpdate(existing: existing, blk: blk, displayTitle: displayTitle, desiredNotes: notes, desiredURL: desiredURL) {
+                    let reasons = updateReasons(existing: existing, blk: blk, displayTitle: displayTitle, desiredNotes: notes, desiredURL: desiredURL)
+                    if reasons.isEmpty {
                         sessionGuard.insert(gKey)
                         skipped += 1
                         return
@@ -428,6 +437,15 @@ final class MirrorEngine {
                     if !config.writeEnabled {
                         sessionGuard.insert(gKey)
                         log("~ WOULD UPDATE [\(srcName) -> \(tgtName)]\(byTimeSuffix) \(curS) -> \(curE)  TO  \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
+                        onPlannedChange?(PlannedChange(
+                            kind: .update, targetName: tgtName, targetCalendarID: tgt.calendarIdentifier,
+                            oldTitle: existing.title, newTitle: displayTitle,
+                            oldStart: curS, oldEnd: curE, newStart: blk.start, newEnd: blk.end,
+                            reasons: reasons
+                        ))
+                        // Keep overlap bookkeeping in step with a real run so skipCovered/fillGaps
+                        // previews match what applying would actually do.
+                        occupied = coalesce(occupied + [Block.span(start: blk.start, end: blk.end)])
                         updated += 1
                         return
                     }
@@ -475,6 +493,15 @@ final class MirrorEngine {
                 if !config.writeEnabled {
                     sessionGuard.insert(gKey)
                     log("+ WOULD CREATE [\(srcName) -> \(tgtName)] \(blk.start) -> \(blk.end)\(titleSuffix) [title: \(displayTitle)]")
+                    onPlannedChange?(PlannedChange(
+                        kind: .create, targetName: tgtName, targetCalendarID: tgt.calendarIdentifier,
+                        newTitle: displayTitle, newStart: blk.start, newEnd: blk.end
+                    ))
+                    // A real create records the time key and extends occupied; mirror that so a
+                    // second identical-time source event (or skipCovered/fillGaps) previews correctly.
+                    placeholderSet.insert(exactTimeKey)
+                    occupied = coalesce(occupied + [Block.span(start: blk.start, end: blk.end)])
+                    created += 1
                     return
                 }
                 guard tgt.calendarIdentifier != srcCal.calendarIdentifier else {
@@ -554,6 +581,10 @@ final class MirrorEngine {
                     if let candidate {
                         if !config.writeEnabled {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(candidate.startDate ?? windowStart) -> \(candidate.endDate ?? windowEnd)")
+                            onPlannedChange?(PlannedChange(
+                                kind: .delete, targetName: tgtName, targetCalendarID: tgt.calendarIdentifier,
+                                oldTitle: candidate.title, oldStart: candidate.startDate, oldEnd: candidate.endDate
+                            ))
                         } else {
                             do {
                                 try store.remove(candidate, span: .thisEvent, commit: true)
@@ -616,6 +647,10 @@ final class MirrorEngine {
                     if shouldDelete {
                         if !config.writeEnabled {
                             log("~ WOULD DELETE (missing source) [\(srcName) -> \(tgtName)] \(ev.startDate ?? windowStart) -> \(ev.endDate ?? windowEnd)")
+                            onPlannedChange?(PlannedChange(
+                                kind: .delete, targetName: tgtName, targetCalendarID: tgt.calendarIdentifier,
+                                oldTitle: ev.title, oldStart: ev.startDate, oldEnd: ev.endDate
+                            ))
                         } else {
                             do {
                                 try store.remove(ev, span: .thisEvent, commit: true)
@@ -669,6 +704,10 @@ final class MirrorEngine {
                 guard isMirrorEvent(ev, prefix: titlePrefix, placeholder: placeholderTitle) else { continue }
                 if !writeEnabled {
                     log("~ WOULD DELETE [\(tgt.title)] \(ev.startDate ?? todayStart) -> \(ev.endDate ?? todayStart)")
+                    onPlannedChange?(PlannedChange(
+                        kind: .delete, targetName: calLabel(tgt), targetCalendarID: tgt.calendarIdentifier,
+                        oldTitle: ev.title, oldStart: ev.startDate, oldEnd: ev.endDate
+                    ))
                 } else {
                     do {
                         try store.remove(ev, span: .thisEvent, commit: true)

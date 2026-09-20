@@ -13,11 +13,13 @@ private func mirrorBadge(for cal: EKCalendar, in calendarsWithMirrors: Set<Strin
 private enum RouteSheet: Identifiable {
     case add
     case edit(index: Int, route: Route)
+    case preview(Route)
 
     var id: String {
         switch self {
         case .add: return "add"
         case .edit(let index, _): return "edit-\(index)"
+        case .preview(let route): return "preview-\(route.id)"
         }
     }
 }
@@ -128,15 +130,17 @@ struct ContentView: View {
             .sheet(item: $sheet) { mode in
                 switch mode {
                 case .add:
-                    RouteFormView(calendars: calendars, existing: nil, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors) { route in
+                    RouteFormView(calendars: calendars, existing: nil, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors, onPreview: preview) { route in
                         routes.append(route)
                         routeStore.saveRoutes(routes)
                     }
                 case .edit(let index, let route):
-                    RouteFormView(calendars: calendars, existing: route, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors) { updated in
+                    RouteFormView(calendars: calendars, existing: route, globalPrefix: routeStore.titlePrefix, calendarsWithMirrors: calendarsWithMirrors, onPreview: preview) { updated in
                         routes[index] = updated
                         routeStore.saveRoutes(routes)
                     }
+                case .preview(let route):
+                    PlannedChangesSheet(calendars: calendars, load: { await preview(route) })
                 }
             }
             .task {
@@ -182,6 +186,9 @@ struct ContentView: View {
                     .disabled(isSyncingAll)
             }
             Menu {
+                Button { sheet = .preview(route) } label: {
+                    Label("Preview", systemImage: "eye")
+                }
                 Button { sheet = .edit(index: index, route: route) } label: {
                     Label("Edit", systemImage: "pencil")
                 }
@@ -215,6 +222,10 @@ struct ContentView: View {
         defer { runningRouteID = nil }
         logLines = await routeStore.run(route: route, calendars: calendars)
         lastSyncDate = routeStore.lastSyncDate
+    }
+
+    private func preview(_ route: Route) async -> [PlannedChange] {
+        await routeStore.preview(route: route, calendars: calendars)
     }
 
     private func syncAll() async {
@@ -295,9 +306,11 @@ private struct RouteFormView: View {
     let existing: Route?
     let globalPrefix: String
     let calendarsWithMirrors: Set<String>
+    let onPreview: (Route) async -> [PlannedChange]
     let onSave: (Route) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var previewRoute: Route?
     @State private var sourceID: String?
     @State private var targetIDs: Set<String>
     @State private var privacy: Bool
@@ -311,11 +324,12 @@ private struct RouteFormView: View {
     @State private var mirrorMirroredEvents: Bool
     @State private var passThroughMirroredTitles: Bool
 
-    init(calendars: [EKCalendar], existing: Route?, globalPrefix: String, calendarsWithMirrors: Set<String>, onSave: @escaping (Route) -> Void) {
+    init(calendars: [EKCalendar], existing: Route?, globalPrefix: String, calendarsWithMirrors: Set<String>, onPreview: @escaping (Route) async -> [PlannedChange], onSave: @escaping (Route) -> Void) {
         self.calendars = calendars
         self.existing = existing
         self.globalPrefix = globalPrefix
         self.calendarsWithMirrors = calendarsWithMirrors
+        self.onPreview = onPreview
         self.onSave = onSave
         _sourceID = State(initialValue: existing?.sourceID)
         _targetIDs = State(initialValue: existing?.targetIDs ?? [])
@@ -438,33 +452,49 @@ private struct RouteFormView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Preview") { previewRoute = makeRoute() }
+                        .disabled(!isComplete)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        guard let sourceID else { return }
-                        let resolvedPrefix: String?
-                        switch prefixMode {
-                        case .global: resolvedPrefix = nil
-                        case .none: resolvedPrefix = ""
-                        case .custom: resolvedPrefix = titlePrefixText
-                        }
-                        onSave(Route(
-                            sourceID: sourceID,
-                            targetIDs: targetIDs,
-                            privacy: privacy,
-                            copyNotes: copyNotes,
-                            syncReminders: syncReminders,
-                            mergeGapHours: mergeGapHours,
-                            overlap: overlap,
-                            allDay: allDay,
-                            titlePrefix: resolvedPrefix,
-                            mirrorMirroredEvents: mirrorMirroredEvents,
-                            passThroughMirroredTitles: passThroughMirroredTitles
-                        ))
+                        guard let route = makeRoute() else { return }
+                        onSave(route)
                         dismiss()
                     }
-                    .disabled(sourceID == nil || targetIDs.isEmpty)
+                    .disabled(!isComplete)
                 }
             }
+            .sheet(item: $previewRoute) { route in
+                PlannedChangesSheet(calendars: calendars, load: { await onPreview(route) })
+            }
         }
+    }
+
+    private var isComplete: Bool { sourceID != nil && !targetIDs.isEmpty }
+
+    // The route exactly as currently configured in the form (saved or not) — Save and
+    // Preview both use this, so a preview always matches what saving would run.
+    private func makeRoute() -> Route? {
+        guard let sourceID else { return nil }
+        let resolvedPrefix: String?
+        switch prefixMode {
+        case .global: resolvedPrefix = nil
+        case .none: resolvedPrefix = ""
+        case .custom: resolvedPrefix = titlePrefixText
+        }
+        return Route(
+            sourceID: sourceID,
+            targetIDs: targetIDs,
+            privacy: privacy,
+            copyNotes: copyNotes,
+            syncReminders: syncReminders,
+            mergeGapHours: mergeGapHours,
+            overlap: overlap,
+            allDay: allDay,
+            titlePrefix: resolvedPrefix,
+            mirrorMirroredEvents: mirrorMirroredEvents,
+            passThroughMirroredTitles: passThroughMirroredTitles
+        )
     }
 }

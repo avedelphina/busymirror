@@ -59,14 +59,29 @@ final class RouteStore {
         UserDefaults.standard.set(data, forKey: routesDefaultsKey)
     }
 
+    // Dry run of a route as configured right now (it needn't be saved): returns every
+    // create/update/delete a real run would make, without writing anything or touching
+    // "Last synced".
+    func preview(route: Route, calendars: [EKCalendar]) async -> [PlannedChange] {
+        var changes: [PlannedChange] = []
+        await run(route: route, calendars: calendars, writeEnabled: false, onChange: { changes.append($0) })
+        return changes
+    }
+
     @discardableResult
-    func run(route: Route, calendars: [EKCalendar]) async -> [String] {
+    func run(
+        route: Route,
+        calendars: [EKCalendar],
+        writeEnabled: Bool = true,
+        onChange: ((PlannedChange) -> Void)? = nil
+    ) async -> [String] {
         guard let source = calendars.first(where: { $0.calendarIdentifier == route.sourceID }) else { return [] }
         let targets = calendars.filter { route.targetIDs.contains($0.calendarIdentifier) }
         guard !targets.isEmpty else { return [] }
 
         var lines: [String] = []
         let engine = MirrorEngine(log: { lines.append($0) })
+        engine.onPlannedChange = onChange
         let config = MirrorConfig(
             daysBack: 1,
             daysForward: 14,
@@ -84,7 +99,7 @@ final class RouteStore {
             excludedOrganizerFilterTerms: parseFilterTerms(excludedOrganizerFiltersRaw),
             mirrorAcceptedOnly: false,
             autoDeleteMissing: true,
-            writeEnabled: true,
+            writeEnabled: writeEnabled,
             syncReminders: route.syncReminders,
             mirrorMirroredEvents: route.mirrorMirroredEvents,
             passThroughMirroredTitles: route.passThroughMirroredTitles
@@ -98,7 +113,9 @@ final class RouteStore {
             sessionGuard: &sessionGuard,
             isMultiRouteRun: false
         )
-        UserDefaults.standard.set(Date(), forKey: lastSyncDefaultsKey)
+        if writeEnabled {
+            UserDefaults.standard.set(Date(), forKey: lastSyncDefaultsKey)
+        }
         return lines
     }
 

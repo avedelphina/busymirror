@@ -80,6 +80,7 @@ A separate, standalone app (`BusyMirroriOS` target, same Xcode project) — its 
 ### What it does
 - Route-driven mirroring with the same per-route options as Mac: Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode.
 - Sync All and per-route Run, Clean Up Placeholders, a "Last synced" indicator.
+- **Preview** before anything is written: a Preview button in the route add/edit form (works on the unsaved settings) and in a saved route's ⋯ menu lists every event that would be created, updated or deleted — old → new title and time, grouped by target calendar and day.
 - Shortcuts/Siri support via App Intents: run one route, run all routes, or ask for status — the iOS equivalent of the Mac CLI.
 - Best-effort background sync (`BGAppRefreshTask`) — iOS decides if/when it runs, no delivery guarantee. Foreground sync or a Shortcuts automation is the reliable path.
 - Settings: editable mirror prefix, title/organizer skip filters.
