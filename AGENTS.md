@@ -15,7 +15,7 @@ Key capabilities (macOS):
 - Scheduled headless runs via a self-installed `launchd` LaunchAgent
 - Settings autosave/restore, plus Import/Export JSON
 - CLI support for headless/scripted runs
-- Preview (per route and all routes) listing every create/update/delete verbatim, per-route prefix mode (Global/Custom/None), chained-mirroring toggles, ⚠️ already-mirrored badge — all at parity with iOS
+- Preview (per route and all routes) listing every create/update/delete verbatim, per-route prefix mode (Global/Custom/None), chained-mirroring toggles, "has mirrors" tag — all at parity with iOS
 
 Key capabilities (iOS/iPadOS):
 - Route-driven mirroring, same per-route option set as Mac (Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode)
@@ -121,32 +121,22 @@ A route can deliberately re-mirror an event that's already a mirror from a diffe
 
 Route's third prefix-related field, `titlePrefix: String?`, has three states: `nil` = inherit the app's global prefix, `""` = no prefix at all, non-empty = custom override (`PrefixMode` in `MirrorConfig.swift` models this as a Global/Custom/None choice for both UIs). Both apps expose all three fields: iOS in `RouteFormView`, Mac in each route card in `RoutesSectionView` (`RoutePrefixEditor` + the two toggles). Mac honors `Route.titlePrefix` in every path that builds a config: `ContentView.makeRouteConfig`, the background auto-sync in `MenuBarSupport.swift`, and `runCleanupForRoute`.
 
-The ⚠️ "already contains mirrored events" badge (`mirroredCalendarIDs(among:store:)` in `MirrorUtils.swift`, `mirrorBadge` in `CalendarDisplay.swift`) is shown next to *sources* and in pickers, not next to a route's own targets — those hold its mirrors by design, so a badge there is just noise. The scan is a synchronous EventKit fetch (±60 days), so Mac runs it on first load, explicit Refresh, and when the calendar count changes — not on every `EKEventStoreChanged`, which `reloadCalendars` handles constantly.
+The "has mirrors" tag (`mirroredCalendarIDs(among:store:)` in `MirrorUtils.swift`, `mirrorBadge` in `CalendarDisplay.swift` — a neutral text pill, not a warning icon, since a triangle read as "something is wrong with this calendar") is shown next to *sources* and in pickers, not next to a route's own targets — those hold its mirrors by design, so a badge there is just noise. The scan is a synchronous EventKit fetch (±60 days), so Mac runs it on first load, explicit Refresh, and when the calendar count changes — not on every `EKEventStoreChanged`, which `reloadCalendars` handles constantly.
 
 ## Feature parity (macOS ↔ iOS)
 
-**Aim for parity wherever the platform allows** (user's standing preference): build a feature on both platforms in the same change, or say explicitly why one is missing it. Parity is about *features*, not data — the apps stay standalone (no Handoff/CloudKit sync). Status as of the Mac parity pass:
+**Aim for parity wherever the platform allows** (the user's standing preference): build a feature on both platforms in the same change, or say explicitly why one is missing it. Parity is about *features*, not data — the apps stay standalone (no Handoff/CloudKit sync), and routes can't be moved between devices anyway (calendar identifiers are local to each device's calendar database).
 
-| Feature | macOS | iOS |
-|---|---|---|
-| Routes with full per-route options | ✅ | ✅ |
-| Preview (verbatim change list) | ✅ | ✅ |
-| Per-route prefix Global/Custom/None | ✅ | ✅ |
-| Chained mirroring toggles | ✅ | ✅ |
-| ⚠️ already-mirrored badge | ✅ | ✅ |
-| Cleanup placeholders, color chips, global prefix, skip filters | ✅ | ✅ |
-| Editable placeholder title | ✅ Preferences | ❌ hardcoded "Busy" |
-| Sync window (days back/forward) | ✅ | ❌ fixed 1 / 14 |
-| Work-hours filter | ✅ | ❌ |
-| Accepted-only filter | ✅ | ❌ |
-| Auto-delete-missing toggle | ✅ | ❌ always on |
-| Defaults for new routes | ✅ Preferences | ❌ fixed |
-| Import/Export settings JSON | ✅ | ❌ |
-| Shortcuts / Siri (App Intents) | ❌ possible, not built | ✅ |
-| Dry-run mode toggle | ✅ (plus Preview) | n/a — Preview instead |
-| CLI, `launchd` schedule, menu bar, event-driven auto-sync | ✅ Mac-only | n/a — platform-inherent (iOS gets App Intents + best-effort `BGAppRefreshTask`) |
+**The canonical status table and the user-facing behavior differences live in `README.md` ("macOS vs iOS") — update it whenever a feature lands on one platform or a gap closes.** `ROADMAP.md` ("Next" → feature parity) holds the plan for the open gaps. Don't copy the table here; it will drift.
 
-The ❌ cells are the open parity gaps.
+Engine-level differences worth knowing when touching shared code (all deliberate today, but they're where "same code, different result" comes from):
+
+- **Config builders are per-platform.** Mac: `ContentView.makeRouteConfig(for:writeEnabled:)` (manual runs and Preview) and a separate builder in `MenuBarSupport.swift` (background auto-sync, reads a settings snapshot). iOS: `RouteStore.run`. A new `MirrorConfig` field has to be wired into all three, and `route.titlePrefix ?? global` applied in each.
+- **`isMultiRouteRun`:** Mac always runs routes together (`true`, shared `sessionGuard`); iOS runs each route alone (`false`). The flag changes legacy-event auto-delete behavior, so a Mac preview must pass `true`.
+- **Defaults:** Mac sync window 1 back / 7 forward (configurable), iOS fixed 1 / 14. Mac's `writeEnabled` defaults to `false` (dry run); iOS always writes, hence Preview.
+- **Placeholder title:** Mac configurable, iOS the constant `"Busy"` in `RouteStore`.
+- **iOS hardcodes** `filterByWorkHours: false`, `mirrorAcceptedOnly: false`, `autoDeleteMissing: true` in `RouteStore.run`.
+- **No server-side "Private" flag exists or can:** EventKit's public headers have nothing for privacy/classification. A "Mark Private" feature was built on an Objective-C runtime hack, never worked reliably, and was removed in 1.5.0 (it would also have blocked App Store review). Don't reintroduce it.
 
 ## Build and Release Commands
 

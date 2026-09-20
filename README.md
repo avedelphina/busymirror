@@ -9,9 +9,7 @@ On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also h
 ## What it does (current)
 - Route-driven mirroring (multi-source): define Source → Targets routes and run them in one go.
 - Manual selection mirroring: pick a source and targets in the UI and run.
-- Two privacy modes:
-  - Private (hide details): mirrors placeholders with prefix + placeholder title (e.g., "🪞 Busy").
-  - Mark Private: mirrors prefix + real title, but marks events Private on supported servers (best-effort).
+- Privacy: **Private** mode hides details — mirrors a placeholder with prefix + placeholder title (e.g., "🪞 Busy"). With Private off, the source title (and optionally its description) is mirrored instead. There is no option to flag mirrored events as "private" on the calendar server: EventKit has no public API for it.
 - DRY-RUN mode: see what would be created/updated/deleted without writing.
 - Activity Log in the app plus persistent file logging on disk.
 - In-app scheduling: install or remove a `launchd` LaunchAgent from the `Scheduled runs` section.
@@ -25,7 +23,7 @@ On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also h
 - Prefix-based tagging and loop guards to prevent re-mirroring mirrors.
 - **Preview**: a Preview button on each route (and "Preview all") lists every event Sync Now would create, update or delete — old → new title and time, grouped by target calendar and day — without writing anything.
 - Per-route prefix (Global / Custom / None) and opt-in **chained mirroring** ("Mirror already-mirrored events", "Copy chained titles as-is") — see [Chained mirroring](#chained-mirroring) below.
-- ⚠️ next to calendars that already contain mirrored events (from any app or device).
+- A "has mirrors" tag next to calendars that already contain mirrored events (from any app or device).
 - Settings: autosave/restore, Import/Export JSON, saved routes for scheduled/headless runs.
 
 ## Why
@@ -87,7 +85,7 @@ A separate, standalone app (`BusyMirroriOS` target, same Xcode project) — its 
 - Shortcuts/Siri support via App Intents: run one route, run all routes, or ask for status — the iOS equivalent of the Mac CLI.
 - Best-effort background sync (`BGAppRefreshTask`) — iOS decides if/when it runs, no delivery guarantee. Foreground sync or a Shortcuts automation is the reliable path.
 - Settings: editable mirror prefix, title/organizer skip filters.
-- Calendar color chips to tell apart same-named calendars across accounts, and a ⚠️ badge for calendars that already contain mirrored events (from either app, any device) — useful since Mac and iOS have separate calendar sets.
+- Calendar color chips to tell apart same-named calendars across accounts, and a "has mirrors" tag on calendars that already contain mirrored events (from either app, any device) — useful since Mac and iOS have separate calendar sets.
 
 ### Chained mirroring
 A route can deliberately re-mirror an event that's already a mirror from a different route or device — e.g. an iOS route mirrors a work calendar into a shared iCloud calendar, then a Mac route mirrors that onward into other calendars. Two per-route toggles control this:
@@ -100,6 +98,46 @@ Each route's prefix can also be set independently: inherit the global prefix, a 
 - Open `BusyMirror.xcodeproj`, scheme `BusyMirroriOS`, destination = a real device (run) or **Any iOS Device (arm64)** (archive).
 - Command line (no simulator needed): `xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos CODE_SIGNING_ALLOWED=NO build`
 - Distribution is via TestFlight (internal or external testers), not yet on the App Store.
+
+## macOS vs iOS
+
+Two standalone apps built from one shared mirroring engine (`MirrorEngine.swift` and friends) — same rules, same event tagging, same chained-mirroring behavior. Each app has its own routes and settings; nothing syncs between them, by design. **The goal is feature parity wherever the platform allows** (see [ROADMAP.md](ROADMAP.md) for the plan to close the gaps below).
+
+Legend: ✅ has it · ❌ missing — a parity gap · — not applicable (platform-inherent)
+
+| Feature | macOS | iOS/iPadOS |
+|---|---|---|
+| Route-driven mirroring with all per-route options | ✅ | ✅ |
+| Preview — verbatim list of what would change | ✅ per route, or all routes | ✅ in the route form and ⋯ menu |
+| Per-route prefix (Global / Custom / None) | ✅ | ✅ |
+| Chained mirroring toggles | ✅ | ✅ |
+| "has mirrors" tag on calendars | ✅ | ✅ |
+| Clean Up Placeholders | ✅ | ✅ |
+| Calendar color chips | ✅ | ✅ |
+| Global mirror prefix, title/organizer skip filters | ✅ Preferences | ✅ Settings |
+| Editable placeholder title | ✅ | ❌ fixed "Busy" |
+| Sync window (days back / forward) | ✅ | ❌ fixed 1 back / 14 forward |
+| Work Hours filter | ✅ | ❌ |
+| Accepted-only filter | ✅ | ❌ |
+| Toggle for auto-deleting mirrors whose source disappeared | ✅ | ❌ always on |
+| Defaults for newly added routes | ✅ Preferences | ❌ fixed |
+| Import / Export settings JSON | ✅ | ❌ |
+| Activity log | ✅ dedicated view + rotating log file | partial — the last run's log in the main list |
+| Shortcuts / Siri (App Intents) | ❌ | ✅ |
+| Manual source/target selection | ✅ | — routes only |
+| Dry-run mode | ✅ (the default) | — use Preview |
+| CLI, `launchd` schedule | ✅ | — |
+| Menu bar | ✅ | — |
+| Automatic sync | ✅ event-driven (see below) | best-effort only (see below) |
+
+### Behavior differences that can surprise you
+- **Sync horizon.** Mac defaults to 1 day back / 7 forward and lets you change it; iOS is fixed at 1 back / 14 forward. The same route can therefore mirror a different span of time on each device.
+- **Write vs. dry-run.** Mac starts in **Dry Run** — you switch to Write to change calendars. On iOS, **Run writes immediately**; use Preview first (a new route's Preview button works before you even save it).
+- **Automatic sync.** Mac watches for calendar changes (debounced), also syncs on wake, runs as a login item with a 30-minute fallback timer, and can be scheduled or scripted. iOS has no persistent process: it syncs when opened, from a Shortcuts automation, or via a background refresh that iOS runs at its own discretion — no guarantee it runs at all. iOS shows "Last synced" so it never implies live sync.
+- **Filters.** Mac can skip events outside Work Hours or that you haven't accepted; iOS mirrors every event in the window (only the title/organizer skip filters apply).
+- **Placeholder title.** Mac's is editable (default "Busy"); iOS always uses "Busy". If both apps mirror into the same calendar, keep Mac's at the default or the placeholders will differ.
+- **Routes and settings are per device and can't be moved between devices.** Calendar identifiers are local to each device's calendar database, so a route exported from one device generally won't resolve on another. Mac's Import/Export is a same-machine backup, not a way to copy routes to your iPhone.
+- **Run scope.** Mac's Sync Now runs all routes as one run with a shared loop-guard; iOS runs each route on its own (Sync All loops over them). Results are the same unless two routes would mirror the same event into the same target.
 
 ## Roadmap
 See [ROADMAP.md](ROADMAP.md)

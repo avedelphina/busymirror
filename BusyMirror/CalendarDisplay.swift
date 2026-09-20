@@ -20,13 +20,20 @@ func calChip(_ cal: EKCalendar) -> some View {
     }
 }
 
-// ⚠️ next to a calendar that already contains mirrored events (see mirroredCalendarIDs) —
-// worth knowing when picking a source, since it's likely a target from another route or device.
+// A small "has mirrors" tag next to a calendar that already contains mirrored events (see
+// mirroredCalendarIDs) — worth knowing when picking a source, since it's likely a target of
+// another route or device. Deliberately neutral text rather than a warning icon: a triangle
+// read as "something is wrong with this calendar", which it isn't.
 @ViewBuilder
 func mirrorBadge(for cal: EKCalendar, in calendarsWithMirrors: Set<String>) -> some View {
     if calendarsWithMirrors.contains(cal.calendarIdentifier) {
-        Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .help("This calendar already contains mirrored placeholder events")
+        Text("has mirrors")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(Color.secondary.opacity(0.18)))
+            .help("This calendar already contains events mirrored by BusyMirror — from another route or device.")
     }
 }

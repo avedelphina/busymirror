@@ -91,7 +91,7 @@ struct ContentView: View {
     @AppStorage("lastRunSummary") private var lastRunSummary: String = ""
     @State private var confirmCleanup = false
     @State private var previewRequest: PreviewRequest? = nil
-    /// Calendars that already contain mirror-tagged events (⚠️ hint in pickers). Rescanned on
+    /// Calendars that already contain mirror-tagged events ("has mirrors" tag in pickers). Rescanned on
     /// first load, explicit Refresh, and when the calendar count changes — not on every
     /// EKEventStoreChanged, since the scan is a synchronous EventKit fetch.
     @State private var calendarsWithMirrors: Set<String> = []

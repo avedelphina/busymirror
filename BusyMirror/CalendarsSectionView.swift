@@ -17,8 +17,8 @@ struct CalendarsSectionView: View {
                 .font(.subheadline.weight(.semibold))
             Picker("Source", selection: $sourceIndex) {
                 ForEach(Array(calendars.indices), id: \.self) { i in
-                    // A menu picker can only show text, so the badge is an emoji here.
-                    Text("\(i + 1): \(calLabel(calendars[i]))\(calendarsWithMirrors.contains(calendars[i].calendarIdentifier) ? " ⚠️" : "")").tag(i)
+                    // A menu picker can only show text, so the "has mirrors" tag is spelled out here.
+                    Text("\(i + 1): \(calLabel(calendars[i]))\(calendarsWithMirrors.contains(calendars[i].calendarIdentifier) ? " (has mirrors)" : "")").tag(i)
                 }
             }
             .pickerStyle(.menu)

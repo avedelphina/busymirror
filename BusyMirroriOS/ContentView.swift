@@ -346,7 +346,7 @@ private struct RouteFormView: View {
                 } header: {
                     Text("Source")
                 } footer: {
-                    Text("⚠️ marks a calendar that already contains mirrored events — likely a target from another route or device.")
+                    Text("\"has mirrors\" tags a calendar that already contains mirrored events — likely a target of another route or device.")
                 }
                 Section("Targets") {
                     ForEach(calendars, id: \.calendarIdentifier) { cal in
