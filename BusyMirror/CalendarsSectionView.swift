@@ -9,6 +9,7 @@ struct CalendarsSectionView: View {
     @Binding var targetSelections: Set<Int>
     @Binding var targetIDs: Set<String>
     let isRunning: Bool
+    let calendarsWithMirrors: Set<String>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -16,7 +17,8 @@ struct CalendarsSectionView: View {
                 .font(.subheadline.weight(.semibold))
             Picker("Source", selection: $sourceIndex) {
                 ForEach(Array(calendars.indices), id: \.self) { i in
-                    Text("\(i + 1): \(calLabel(calendars[i]))").tag(i)
+                    // A menu picker can only show text, so the badge is an emoji here.
+                    Text("\(i + 1): \(calLabel(calendars[i]))\(calendarsWithMirrors.contains(calendars[i].calendarIdentifier) ? " ⚠️" : "")").tag(i)
                 }
             }
             .pickerStyle(.menu)
@@ -59,6 +61,7 @@ struct CalendarsSectionView: View {
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
                                 calChip(calendars[i])
+                                mirrorBadge(for: calendars[i], in: calendarsWithMirrors)
                             }
                             .padding(.vertical, 3)
                         }

@@ -13,7 +13,10 @@ struct RoutesSectionView: View {
     let titlePrefix: String
     let placeholderTitle: String
     let canAddRoute: Bool
+    let calendarsWithMirrors: Set<String>
     let onAddRoute: () -> Void
+    let onPreview: (Route) -> Void
+    let onPreviewAll: () -> Void
 
     @State private var expandedRouteID: UUID?
 
@@ -37,6 +40,14 @@ struct RoutesSectionView: View {
                 Button("Add from current selection", action: onAddRoute)
                     .disabled(isRunning || !canAddRoute)
                     .buttonStyle(.borderedProminent)
+                Button {
+                    onPreviewAll()
+                } label: {
+                    Label("Preview all", systemImage: "eye")
+                }
+                .disabled(isRunning || routes.isEmpty)
+                .buttonStyle(.bordered)
+                .help("List exactly what Sync Now would create, update or delete across all routes. Nothing is written.")
                 Button("Clear") { routes.removeAll() }
                     .disabled(isRunning || routes.isEmpty)
                     .buttonStyle(.bordered)
@@ -84,7 +95,7 @@ struct RoutesSectionView: View {
                 Divider()
 
                 Toggle("Private", isOn: routeBinding.privacy)
-                    .help("If ON, mirror as ‘\(titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
+                    .help("If ON, mirror as ‘\(route.titlePrefix ?? titlePrefix)\(placeholderTitle)’ with no notes. If OFF, mirror source title (and optionally notes).")
                 Toggle("Copy description", isOn: routeBinding.copyNotes)
                     .disabled(isRunning || route.privacy)
                     .help("If ON and Private is OFF, copy the source event’s notes/description into the placeholder.")
@@ -95,10 +106,30 @@ struct RoutesSectionView: View {
                     .disabled(isRunning)
                     .help("Mirror all-day events for this source.")
 
+                RoutePrefixEditor(titlePrefix: routeBinding.titlePrefix, globalPrefix: titlePrefix)
+                    .disabled(isRunning)
+
+                Toggle("Mirror already-mirrored events", isOn: routeBinding.mirrorMirroredEvents)
+                    .disabled(isRunning)
+                    .help("Off (default): source events that are themselves mirrors (from any route, any device) are skipped, preventing re-mirroring. Turn on only for a deliberate chain (A → B → C) — enabling it on a route that loops back to its own target duplicates events on every run.")
+                if route.mirrorMirroredEvents {
+                    Toggle("Copy chained titles as-is", isOn: routeBinding.passThroughMirroredTitles)
+                        .disabled(isRunning)
+                        .padding(.leading, 18)
+                        .help("Avoids this route's prefix stacking onto an upstream one (e.g. “B: A: Meeting”). With Private off, the upstream title is kept verbatim; with Private on, this route's own placeholder is used but the upstream prefix is preserved (e.g. “WORK1: Busy”). Private always wins over the upstream title.")
+                }
+
                 HStack(spacing: 16) {
                     mergeGapField(for: routeBinding)
                     overlapPicker(for: routeBinding)
                     Spacer(minLength: 0)
+                    Button {
+                        onPreview(route)
+                    } label: {
+                        Label("Preview", systemImage: "eye")
+                    }
+                    .disabled(isRunning)
+                    .help("List exactly what Sync Now would create, update or delete for this route. Nothing is written.")
                     Button(role: .destructive) {
                         routes.removeAll { $0.id == route.id }
                     } label: { Text("Remove Route") }
@@ -127,6 +158,7 @@ struct RoutesSectionView: View {
                     Circle().fill(calColor(sCal)).frame(width: 10, height: 10)
                     Text(calLabel(sCal))
                         .fontWeight(.semibold)
+                    mirrorBadge(for: sCal, in: calendarsWithMirrors)
                 }
             } else {
                 Text(labelForCalendar(id: route.sourceID))
@@ -196,5 +228,49 @@ struct RoutesSectionView: View {
             .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
         }
         .font(.subheadline)
+    }
+}
+
+/// Global / Custom / None for a route's prefix (Route.titlePrefix: nil / non-empty / "").
+/// Keeps the picked mode and custom text as local state — a bare String? can't tell "Custom,
+/// still typing" from "None" — and writes the resolved value back on every change.
+private struct RoutePrefixEditor: View {
+    @Binding var titlePrefix: String?
+    let globalPrefix: String
+
+    @State private var mode: PrefixMode
+    @State private var customText: String
+
+    init(titlePrefix: Binding<String?>, globalPrefix: String) {
+        _titlePrefix = titlePrefix
+        self.globalPrefix = globalPrefix
+        let parsed = PrefixMode.from(titlePrefix.wrappedValue)
+        _mode = State(initialValue: parsed.mode)
+        _customText = State(initialValue: parsed.customText)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Prefix")
+            Picker("Prefix", selection: $mode) {
+                ForEach(PrefixMode.allCases) { m in
+                    Text(m.rawValue).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 200)
+            if mode == .custom {
+                TextField("e.g. WORK: ", text: $customText)
+                    .frame(width: 140)
+            }
+            if mode == .global {
+                Text("(\(globalPrefix))").foregroundStyle(.secondary)
+            }
+        }
+        .font(.subheadline)
+        .onChange(of: mode) { _, _ in titlePrefix = mode.resolve(customText: customText) }
+        .onChange(of: customText) { _, _ in titlePrefix = mode.resolve(customText: customText) }
+        .help("Global: use the mirror prefix from Preferences. Custom: a prefix just for this route. None: no prefix at all.")
     }
 }

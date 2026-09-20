@@ -223,7 +223,7 @@ final class BusyMirrorAppController: ObservableObject {
                 copyDescription: route.copyNotes,
                 mirrorAllDay: route.allDay,
                 overlapMode: route.overlap,
-                titlePrefix: settings.titlePrefix,
+                titlePrefix: route.titlePrefix ?? settings.titlePrefix,
                 placeholderTitle: settings.placeholderTitle,
                 filterByWorkHours: settings.filterByWorkHours,
                 workHoursStart: settings.workHoursStart,

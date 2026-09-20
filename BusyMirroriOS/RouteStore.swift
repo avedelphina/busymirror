@@ -159,27 +159,4 @@ final class RouteStore {
         }
         return lines
     }
-
-    // Detects calendars that already contain mirrored events, regardless of
-    // which app/device/prefix wrote them — every mirror event carries a
-    // mirror:// URL tag independent of the visible title prefix, so this
-    // works across Mac/iOS even though the two use separate route sets.
-    func calendarsContainingMirrors(_ calendars: [EKCalendar], daysBack: Int = 365, daysForward: Int = 365) -> Set<String> {
-        let cal = Calendar.current
-        let todayStart = cal.startOfDay(for: Date())
-        guard let windowStart = cal.date(byAdding: .day, value: -daysBack, to: todayStart),
-              let windowEnd = cal.date(byAdding: .day, value: daysForward, to: todayStart) else { return [] }
-
-        var result = Set<String>()
-        for c in calendars {
-            let predicate = eventStore.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [c])
-            // URL-only check (not isMirrorEvent's title-prefix path): a "" prefix/placeholder
-            // would spuriously match untitled events via isMirrorEvent's placeholder equality check.
-            let hasMirror = eventStore.events(matching: predicate).contains {
-                $0.url?.absoluteString.hasPrefix("mirror://") ?? false
-            }
-            if hasMirror { result.insert(c.calendarIdentifier) }
-        }
-        return result
-    }
 }

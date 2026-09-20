@@ -38,6 +38,12 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
 }
 
 
+/// Identifies one Preview sheet presentation (a route, or all routes).
+private struct PreviewRequest: Identifiable {
+    let id = UUID()
+    let routes: [Route]
+}
+
 struct ContentView: View {
     @EnvironmentObject private var appController: BusyMirrorAppController
     @State private var store = EKEventStore()
@@ -84,6 +90,12 @@ struct ContentView: View {
     @AppStorage("lastRunOK") private var lastRunOK: Bool = true
     @AppStorage("lastRunSummary") private var lastRunSummary: String = ""
     @State private var confirmCleanup = false
+    @State private var previewRequest: PreviewRequest? = nil
+    /// Calendars that already contain mirror-tagged events (⚠️ hint in pickers). Rescanned on
+    /// first load, explicit Refresh, and when the calendar count changes — not on every
+    /// EKEventStoreChanged, since the scan is a synchronous EventKit fetch.
+    @State private var calendarsWithMirrors: Set<String> = []
+    @State private var mirrorScanCalendarCount = -1
     @State private var mirrorTask: Task<Void, Never>? = nil
     @State private var progressText: String? = nil
     /// Token for the EKEventStoreChanged observer; nil until calendar access is granted.
@@ -398,28 +410,7 @@ struct ContentView: View {
             }
 
             ranAnyRoute = true
-            let config = MirrorConfig(
-                daysBack: daysBack,
-                daysForward: daysForward,
-                mergeGapMin: max(0, r.mergeGapHours * 60),
-                hideDetails: r.privacy,
-                copyDescription: r.copyNotes,
-                mirrorAllDay: r.allDay,
-                overlapMode: r.overlap,
-                titlePrefix: titlePrefix,
-                placeholderTitle: placeholderTitle,
-                filterByWorkHours: filterByWorkHours,
-                workHoursStart: workHoursStart,
-                workHoursEnd: workHoursEnd,
-                excludedTitleFilterTerms: excludedTitleFilterTerms,
-                excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
-                mirrorAcceptedOnly: mirrorAcceptedOnly,
-                autoDeleteMissing: autoDeleteMissing,
-                writeEnabled: writeEnabled,
-                syncReminders: r.syncReminders,
-                mirrorMirroredEvents: r.mirrorMirroredEvents,
-                passThroughMirroredTitles: r.passThroughMirroredTitles
-            )
+            let config = makeRouteConfig(for: r, writeEnabled: writeEnabled)
             let srcCal = calendars[sIdx]
             let targets = calendars.filter { validTargets.contains($0.calendarIdentifier) && $0.calendarIdentifier != srcCal.calendarIdentifier }
             await MainActor.run {
@@ -442,6 +433,50 @@ struct ContentView: View {
         if !ranAnyRoute {
             log("No valid routes to run. Refresh calendars and update your route selections.")
         }
+    }
+
+    // The one place a route's MirrorConfig is built — real runs and Preview both use it, so a
+    // preview can't drift from what Sync Now would do.
+    private func makeRouteConfig(for r: Route, writeEnabled: Bool) -> MirrorConfig {
+        MirrorConfig(
+            daysBack: daysBack,
+            daysForward: daysForward,
+            mergeGapMin: max(0, r.mergeGapHours * 60),
+            hideDetails: r.privacy,
+            copyDescription: r.copyNotes,
+            mirrorAllDay: r.allDay,
+            overlapMode: r.overlap,
+            titlePrefix: r.titlePrefix ?? titlePrefix,
+            placeholderTitle: placeholderTitle,
+            filterByWorkHours: filterByWorkHours,
+            workHoursStart: workHoursStart,
+            workHoursEnd: workHoursEnd,
+            excludedTitleFilterTerms: excludedTitleFilterTerms,
+            excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
+            mirrorAcceptedOnly: mirrorAcceptedOnly,
+            autoDeleteMissing: autoDeleteMissing,
+            writeEnabled: writeEnabled,
+            syncReminders: r.syncReminders,
+            mirrorMirroredEvents: r.mirrorMirroredEvents,
+            passThroughMirroredTitles: r.passThroughMirroredTitles
+        )
+    }
+
+    // Dry run of the given routes exactly as Sync Now would run them (multi-route run, one
+    // shared loop-guard). Writes nothing, and — unlike runConfiguredRoutes — doesn't touch the
+    // UI's source/target selection or progress state, and stays out of the Activity Log.
+    private func previewChanges(for routesToPreview: [Route]) async -> [PlannedChange] {
+        var changes: [PlannedChange] = []
+        var sessionGuard = Set<String>()
+        for r in routesToPreview {
+            guard let srcCal = calendars.first(where: { $0.calendarIdentifier == r.sourceID }) else { continue }
+            let targets = calendars.filter { r.targetIDs.contains($0.calendarIdentifier) && $0.calendarIdentifier != srcCal.calendarIdentifier }
+            guard !targets.isEmpty else { continue }
+            let engine = MirrorEngine(log: { _ in })
+            engine.onPlannedChange = { changes.append($0) }
+            await engine.runMirror(store: store, config: makeRouteConfig(for: r, writeEnabled: false), sourceCalendar: srcCal, targetCalendars: targets, sessionGuard: &sessionGuard, isMultiRouteRun: true)
+        }
+        return changes
     }
 
     private func makeMirrorConfig() -> MirrorConfig {
@@ -583,7 +618,8 @@ struct ContentView: View {
                             sourceIndex: $sourceIndex,
                             targetSelections: $targetSelections,
                             targetIDs: $targetIDs,
-                            isRunning: isRunning
+                            isRunning: isRunning,
+                            calendarsWithMirrors: calendarsWithMirrors
                         )
                         HStack {
                             Spacer()
@@ -605,7 +641,10 @@ struct ContentView: View {
                     titlePrefix: titlePrefix,
                     placeholderTitle: placeholderTitle,
                     canAddRoute: sourceID != nil && !targetIDs.isEmpty,
-                    onAddRoute: addRouteFromCurrentSelection
+                    calendarsWithMirrors: calendarsWithMirrors,
+                    onAddRoute: addRouteFromCurrentSelection,
+                    onPreview: { route in previewRequest = PreviewRequest(routes: [route]) },
+                    onPreviewAll: { previewRequest = PreviewRequest(routes: routes) }
                 )
             }
             .padding(20)
@@ -779,6 +818,9 @@ struct ContentView: View {
             .navigationTitle((selectedSection ?? .routes).title)
             .navigationSubtitle(statusSubtitle)
             .toolbar { toolbarContent }
+        }
+        .sheet(item: $previewRequest) { request in
+            PlannedChangesSheet(calendars: calendars, load: { await previewChanges(for: request.routes) })
         }
         .confirmationDialog(
             "Delete mirrored placeholders?",
@@ -1206,6 +1248,10 @@ struct ContentView: View {
                 saveSettingsToDefaults()
             }
         }
+        if forceResetStore || calendars.count != mirrorScanCalendarCount {
+            calendarsWithMirrors = mirroredCalendarIDs(among: calendars, store: store)
+            mirrorScanCalendarCount = calendars.count
+        }
         // Initialize IDs on first load
         if sourceID == nil, let first = calendars.first { sourceID = first.calendarIdentifier }
         // Rebuild index-based selections from stored IDs
@@ -1459,7 +1505,7 @@ struct ContentView: View {
         // Do NOT mutate sourceIndex / sourceID / targetIDs here: cleanup does
         // not need to reflect route selections in the UI and doing so causes
         // jarring picker jumps when iterating over multiple routes.
-        await makeEngine().runCleanup(store: store, daysBack: daysBack, daysForward: daysForward, sourceCalendar: srcCal, targetCalendars: targets, titlePrefix: titlePrefix, placeholderTitle: placeholderTitle, writeEnabled: writeEnabled)
+        await makeEngine().runCleanup(store: store, daysBack: daysBack, daysForward: daysForward, sourceCalendar: srcCal, targetCalendars: targets, titlePrefix: route.titlePrefix ?? titlePrefix, placeholderTitle: placeholderTitle, writeEnabled: writeEnabled)
     }
 
     private let settingsDefaultsKey = "settings.v2"

@@ -1,8 +1,9 @@
 import SwiftUI
 import EventKit
 
-// What a route would change right now, change by change — the phone-friendly answer to
-// reading dry-run log lines. Opens immediately with a spinner and fills in when `load` finishes.
+// What a route would change right now, change by change — the readable answer to scrolling
+// dry-run log lines. Shared by both apps. Opens immediately with a spinner and fills in
+// when `load` finishes.
 struct PlannedChangesSheet: View {
     let calendars: [EKCalendar]
     let load: () async -> [PlannedChange]
@@ -18,7 +19,7 @@ struct PlannedChangesSheet: View {
                         ContentUnavailableView(
                             "Nothing to change",
                             systemImage: "checkmark.circle",
-                            description: Text("The target calendars already match this route.")
+                            description: Text("The target calendars are already up to date.")
                         )
                     } else {
                         changeList(changes)
@@ -28,7 +29,9 @@ struct PlannedChangesSheet: View {
                 }
             }
             .navigationTitle("Preview")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
@@ -36,6 +39,10 @@ struct PlannedChangesSheet: View {
             }
             .task { changes = await load() }
         }
+        #if os(macOS)
+        // A macOS sheet has no intrinsic size; without this it collapses to a sliver.
+        .frame(minWidth: 520, idealWidth: 580, minHeight: 440, idealHeight: 600)
+        #endif
     }
 
     private func changeList(_ changes: [PlannedChange]) -> some View {

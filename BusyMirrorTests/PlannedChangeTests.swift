@@ -131,4 +131,32 @@ final class PlannedChangeTests: XCTestCase {
         let c = change(.create, start: "2026-09-19T09:00:00Z", end: "2026-09-19T10:00:00Z", reasons: [.marker])
         XCTAssertTrue(c.extraNotes.isEmpty)
     }
+
+    // MARK: - PrefixMode (Route.titlePrefix as a Global / Custom / None choice)
+
+    func testPrefixModeFromStoredValue() {
+        XCTAssertTrue(PrefixMode.from(nil) == (.global, ""))
+        XCTAssertTrue(PrefixMode.from("") == (.none, ""))
+        XCTAssertTrue(PrefixMode.from("WORK: ") == (.custom, "WORK: "))
+    }
+
+    func testPrefixModeResolve() {
+        XCTAssertNil(PrefixMode.global.resolve(customText: "ignored"))
+        XCTAssertEqual(PrefixMode.none.resolve(customText: "ignored"), "")
+        XCTAssertEqual(PrefixMode.custom.resolve(customText: "WORK: "), "WORK: ")
+    }
+
+    func testPrefixModeRoundTrips() {
+        for stored in [nil, "", "WORK: ", "🪞 "] as [String?] {
+            let parsed = PrefixMode.from(stored)
+            XCTAssertEqual(parsed.mode.resolve(customText: parsed.customText), stored)
+        }
+    }
+
+    func testEmptyCustomPrefixReadsBackAsNone() {
+        // "Custom" with nothing typed is stored as "" — an empty prefix *is* no prefix.
+        let stored = PrefixMode.custom.resolve(customText: "")
+        XCTAssertEqual(stored, "")
+        XCTAssertEqual(PrefixMode.from(stored).mode, .none)
+    }
 }

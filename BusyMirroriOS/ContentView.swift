@@ -1,15 +1,6 @@
 import SwiftUI
 import EventKit
 
-@ViewBuilder
-private func mirrorBadge(for cal: EKCalendar, in calendarsWithMirrors: Set<String>) -> some View {
-    if calendarsWithMirrors.contains(cal.calendarIdentifier) {
-        Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(.orange)
-            .help("This calendar already contains mirrored placeholder events")
-    }
-}
-
 private enum RouteSheet: Identifiable {
     case add
     case edit(index: Int, route: Route)
@@ -147,7 +138,7 @@ struct ContentView: View {
                 await requestAccessAndLoadCalendars()
                 routes = routeStore.loadRoutes()
                 lastSyncDate = routeStore.lastSyncDate
-                calendarsWithMirrors = routeStore.calendarsContainingMirrors(calendars)
+                calendarsWithMirrors = mirroredCalendarIDs(among: calendars, store: routeStore.eventStore)
             }
         }
     }
@@ -170,7 +161,6 @@ struct ContentView: View {
                     ForEach(route.targetIDs.sorted(), id: \.self) { id in
                         if let target = calendars.first(where: { $0.calendarIdentifier == id }) {
                             calChip(target)
-                            mirrorBadge(for: target, in: calendarsWithMirrors)
                         }
                     }
                 }
@@ -294,13 +284,6 @@ private struct SettingsSheet: View {
     }
 }
 
-private enum PrefixMode: String, CaseIterable, Identifiable {
-    case global = "Global"
-    case custom = "Custom"
-    case none = "None"
-    var id: String { rawValue }
-}
-
 private struct RouteFormView: View {
     let calendars: [EKCalendar]
     let existing: Route?
@@ -339,17 +322,9 @@ private struct RouteFormView: View {
         _allDay = State(initialValue: existing?.allDay ?? false)
         _mergeGapHours = State(initialValue: existing?.mergeGapHours ?? 0)
         _overlap = State(initialValue: existing?.overlap ?? .allow)
-        switch existing?.titlePrefix {
-        case .some(let p) where p.isEmpty:
-            _prefixMode = State(initialValue: .none)
-            _titlePrefixText = State(initialValue: "")
-        case .some(let p):
-            _prefixMode = State(initialValue: .custom)
-            _titlePrefixText = State(initialValue: p)
-        case .none:
-            _prefixMode = State(initialValue: .global)
-            _titlePrefixText = State(initialValue: "")
-        }
+        let parsedPrefix = PrefixMode.from(existing?.titlePrefix)
+        _prefixMode = State(initialValue: parsedPrefix.mode)
+        _titlePrefixText = State(initialValue: parsedPrefix.customText)
         _mirrorMirroredEvents = State(initialValue: existing?.mirrorMirroredEvents ?? false)
         _passThroughMirroredTitles = State(initialValue: existing?.passThroughMirroredTitles ?? false)
     }
@@ -477,12 +452,7 @@ private struct RouteFormView: View {
     // Preview both use this, so a preview always matches what saving would run.
     private func makeRoute() -> Route? {
         guard let sourceID else { return nil }
-        let resolvedPrefix: String?
-        switch prefixMode {
-        case .global: resolvedPrefix = nil
-        case .none: resolvedPrefix = ""
-        case .custom: resolvedPrefix = titlePrefixText
-        }
+        let resolvedPrefix = prefixMode.resolve(customText: titlePrefixText)
         return Route(
             sourceID: sourceID,
             targetIDs: targetIDs,

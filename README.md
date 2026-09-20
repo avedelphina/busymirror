@@ -23,6 +23,9 @@ On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also h
 - Cleanup of placeholders, including auto-delete of mirrors whose source disappeared.
 - Refresh Calendars prunes stale saved calendars and routes when calendars are removed from the system.
 - Prefix-based tagging and loop guards to prevent re-mirroring mirrors.
+- **Preview**: a Preview button on each route (and "Preview all") lists every event Sync Now would create, update or delete — old → new title and time, grouped by target calendar and day — without writing anything.
+- Per-route prefix (Global / Custom / None) and opt-in **chained mirroring** ("Mirror already-mirrored events", "Copy chained titles as-is") — see [Chained mirroring](#chained-mirroring) below.
+- ⚠️ next to calendars that already contain mirrored events (from any app or device).
 - Settings: autosave/restore, Import/Export JSON, saved routes for scheduled/headless runs.
 
 ## Why

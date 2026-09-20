@@ -139,3 +139,25 @@ func isMirrorEvent(title: String?, urlString: String?, prefix: String, placehold
 func isMirrorEvent(_ ev: EKEvent, prefix: String, placeholder: String) -> Bool {
     isMirrorEvent(title: ev.title, urlString: ev.url?.absoluteString, prefix: prefix, placeholder: placeholder)
 }
+
+// Calendars that already contain mirror-tagged events, whichever app/device/prefix wrote
+// them — the mirror:// URL tag is prefix-independent, so this works across the Mac/iOS
+// boundary even though the two apps don't share routes. URL-only on purpose: isMirrorEvent's
+// title path would match untitled events against an empty placeholder. A hint for pickers,
+// so the window is modest, and synchronous (EventKit fetch) — call it on load/refresh, not
+// on every store-change notification.
+func mirroredCalendarIDs(among calendars: [EKCalendar], store: EKEventStore, daysBack: Int = 60, daysForward: Int = 60) -> Set<String> {
+    let cal = Calendar.current
+    let todayStart = cal.startOfDay(for: Date())
+    guard let windowStart = cal.date(byAdding: .day, value: -daysBack, to: todayStart),
+          let windowEnd = cal.date(byAdding: .day, value: daysForward, to: todayStart) else { return [] }
+
+    var result = Set<String>()
+    for c in calendars {
+        let predicate = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [c])
+        if store.events(matching: predicate).contains(where: { $0.url?.absoluteString.hasPrefix("mirror://") ?? false }) {
+            result.insert(c.calendarIdentifier)
+        }
+    }
+    return result
+}

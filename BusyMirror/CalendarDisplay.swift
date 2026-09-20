@@ -19,3 +19,14 @@ func calChip(_ cal: EKCalendar) -> some View {
         Text(calLabel(cal))
     }
 }
+
+// ⚠️ next to a calendar that already contains mirrored events (see mirroredCalendarIDs) —
+// worth knowing when picking a source, since it's likely a target from another route or device.
+@ViewBuilder
+func mirrorBadge(for cal: EKCalendar, in calendarsWithMirrors: Set<String>) -> some View {
+    if calendarsWithMirrors.contains(cal.calendarIdentifier) {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .help("This calendar already contains mirrored placeholder events")
+    }
+}

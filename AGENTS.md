@@ -15,6 +15,7 @@ Key capabilities (macOS):
 - Scheduled headless runs via a self-installed `launchd` LaunchAgent
 - Settings autosave/restore, plus Import/Export JSON
 - CLI support for headless/scripted runs
+- Preview (per route and all routes) listing every create/update/delete verbatim, per-route prefix mode (Global/Custom/None), chained-mirroring toggles, ⚠️ already-mirrored badge — all at parity with iOS
 
 Key capabilities (iOS/iPadOS):
 - Route-driven mirroring, same per-route option set as Mac (Private, Copy description, Sync reminders, Mirror all-day, Merge gap, Overlap mode)
@@ -59,6 +60,7 @@ BusyMirror/                      # macOS app target
 ├── EventFilters.swift           # Work-hours, title, and organizer filters — shared with iOS
 ├── CalendarDisplay.swift        # calColor/calChip/calLabel view helpers — shared with iOS
 ├── PlannedChange.swift          # PlannedChange model + grouping/summary/title-reason helpers (pure, unit-tested) — shared with iOS
+├── PlannedChangesSheet.swift    # Preview sheet UI (grouped, verbatim change list) — shared with iOS
 ├── AppLogStore.swift            # File-backed log store with rotation — shared with iOS
 ├── Info.plist                   # calendar/reminders usage descriptions
 ├── BusyMirror.entitlements      # App sandbox + calendar access entitlement
@@ -67,7 +69,7 @@ BusyMirror/                      # macOS app target
 BusyMirroriOS/                   # iOS/iPadOS app target — see "iOS/iPadOS target" below
 
 BusyMirror.xcodeproj/            # Xcode project (PBXFileSystemSynchronizedRootGroup — new .swift files are auto-included per target's folder)
-BusyMirrorTests/                 # Unit tests: BlockMathTests, EventFiltersTests, MirrorUtilsTests, SettingsPayloadTests, PlannedChangeTests (75 tests)
+BusyMirrorTests/                 # Unit tests: BlockMathTests, EventFiltersTests, MirrorUtilsTests, SettingsPayloadTests, PlannedChangeTests, RouteCodingTests (82 tests)
 BusyMirrorUITests/                # UI tests (empty)
 ```
 
@@ -84,13 +86,12 @@ BusyMirroriOS/
 ├── BusyMirroriOSApp.swift   # App entry point (WindowGroup, no MenuBarExtra) + BGAppRefreshTask registration
 ├── ContentView.swift        # Routes list, add/edit/delete, Sync All, Clean Up Placeholders, Settings sheet
 ├── RouteStore.swift         # @MainActor singleton: route persistence, calendar access, run/preview/cleanup — shared by ContentView and the App Intents so both call the same logic
-├── PlannedChangesSheet.swift # Preview UI: grouped, verbatim list of what a route would change
 ├── RouteIntents.swift       # App Intents (RunRouteIntent, RunAllRoutesIntent, GetStatusIntent) + AppShortcutsProvider
 ├── Info.plist                # NSCalendarsFullAccessUsageDescription, BGTaskSchedulerPermittedIdentifiers, UIBackgroundModes
 └── Assets.xcassets/          # AppIcon (full multi-size iOS iconset, flattened to opaque — see "Icons" note below)
 ```
 
-The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`, `PlannedChange.swift`. `Route` and `OverlapMode` live in `MirrorConfig.swift` (not `ContentView.swift`) specifically so both targets can use them. These files must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
+The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`, `PlannedChange.swift`, `PlannedChangesSheet.swift`. `Route`, `OverlapMode` and `PrefixMode` live in `MirrorConfig.swift` (not `ContentView.swift`) specifically so both targets can use them. These files must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
 
 Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`) is excluded from the iOS target and stays Mac-only.
 
@@ -107,6 +108,8 @@ xcodebuild -project BusyMirror.xcodeproj -target BusyMirroriOS -sdk iphoneos COD
 
 For a preview to match what applying would do, the dry-run branches keep the same bookkeeping a real run does: they extend `occupied` and record the time key (`placeholderSet`) after each would-be create/update, so `skipCovered`/`fillGaps` and identical-time source events behave the same as in a real run, and the create counter is incremented in dry-run like the update counter already was. Dry run still persists the mirror index (an invisible normalization of already-existing mirrors, pre-existing behavior) but writes no calendar data.
 
+macOS: `ContentView.makeRouteConfig(for:writeEnabled:)` is the single place a route's `MirrorConfig` is built — real runs (`runConfiguredRoutes`) and `previewChanges(for:)` both use it, so a preview can't drift from Sync Now. Unlike iOS, Mac previews run with `isMultiRouteRun: true` and one shared loop-guard across routes, because that's how Mac always runs (the flag changes auto-delete behavior for legacy events), and `previewChanges` deliberately doesn't touch the UI's source/target selection or progress state (which `runConfiguredRoutes` does) or the Activity Log. Entry points: a Preview button in each expanded route card, and "Preview all" in the routes header.
+
 iOS: `RouteStore.preview(route:calendars:)` runs the engine with `writeEnabled: false` and collects the changes; it never updates "Last synced". `RouteFormView.makeRoute()` builds the route from current (unsaved) form state and is shared by Save and Preview, so a preview always matches what saving would run. Preview shows a *snapshot of right now* — it is not a plan that Apply executes; saved routes' Run / Sync All still write immediately (preview them first via the ⋯ menu).
 
 ## Chained mirroring
@@ -116,7 +119,34 @@ A route can deliberately re-mirror an event that's already a mirror from a diffe
 - **`mirrorMirroredEvents`**: bypasses the loop-guard (`MirrorEngine.swift`, the `isMirrorEvent` check before a source event is skipped) for that route's source read. Detection is via the `mirror://...` URL tag every mirror event carries (`MirrorUtils.swift`'s `buildMirrorURL`/`isMirrorEvent`) — independent of title prefix, app, or device, so it works across the Mac/iOS boundary even though the two don't share routes or settings.
 - **`passThroughMirroredTitles`**: only meaningful with the above on. Without it, re-prefixing an already-mirrored title stacks (e.g. `B: A: Meeting`). With Privacy off, the upstream title is relayed completely verbatim. With Privacy on (which always wins — a Private route can never leak an upstream title just because pass-through is on), this route's own placeholder is used but the upstream route's *prefix* is preserved via `mirrorTitleMarker` (`MirrorUtils.swift`, an invisible U+2063 marker embedded right after a route's own prefix on every newly-built title) and `extractMirrorPrefix(from:)`. This lets a chained event (e.g. `WORK1: Busy`) and a genuinely native event on the same source calendar (e.g. `WORK: Busy`, this route's own prefix) stay distinguishable even though both are hidden behind placeholders — detection (`Block.isMirrorSource`) happens per event, not per calendar, so a source calendar can mix both kinds.
 
-Route's third prefix-related field, `titlePrefix: String?`, has three states: `nil` = inherit the app's global prefix, `""` = no prefix at all, non-empty = custom override. The iOS `RouteFormView` exposes this as a Global/Custom/None picker; Mac's `RoutesSectionView`/`PreferencesView` don't expose any of these three fields in the UI yet (the `Route` model supports them since it's shared, but Mac's own UI is a follow-up).
+Route's third prefix-related field, `titlePrefix: String?`, has three states: `nil` = inherit the app's global prefix, `""` = no prefix at all, non-empty = custom override (`PrefixMode` in `MirrorConfig.swift` models this as a Global/Custom/None choice for both UIs). Both apps expose all three fields: iOS in `RouteFormView`, Mac in each route card in `RoutesSectionView` (`RoutePrefixEditor` + the two toggles). Mac honors `Route.titlePrefix` in every path that builds a config: `ContentView.makeRouteConfig`, the background auto-sync in `MenuBarSupport.swift`, and `runCleanupForRoute`.
+
+The ⚠️ "already contains mirrored events" badge (`mirroredCalendarIDs(among:store:)` in `MirrorUtils.swift`, `mirrorBadge` in `CalendarDisplay.swift`) is shown next to *sources* and in pickers, not next to a route's own targets — those hold its mirrors by design, so a badge there is just noise. The scan is a synchronous EventKit fetch (±60 days), so Mac runs it on first load, explicit Refresh, and when the calendar count changes — not on every `EKEventStoreChanged`, which `reloadCalendars` handles constantly.
+
+## Feature parity (macOS ↔ iOS)
+
+**Aim for parity wherever the platform allows** (user's standing preference): build a feature on both platforms in the same change, or say explicitly why one is missing it. Parity is about *features*, not data — the apps stay standalone (no Handoff/CloudKit sync). Status as of the Mac parity pass:
+
+| Feature | macOS | iOS |
+|---|---|---|
+| Routes with full per-route options | ✅ | ✅ |
+| Preview (verbatim change list) | ✅ | ✅ |
+| Per-route prefix Global/Custom/None | ✅ | ✅ |
+| Chained mirroring toggles | ✅ | ✅ |
+| ⚠️ already-mirrored badge | ✅ | ✅ |
+| Cleanup placeholders, color chips, global prefix, skip filters | ✅ | ✅ |
+| Editable placeholder title | ✅ Preferences | ❌ hardcoded "Busy" |
+| Sync window (days back/forward) | ✅ | ❌ fixed 1 / 14 |
+| Work-hours filter | ✅ | ❌ |
+| Accepted-only filter | ✅ | ❌ |
+| Auto-delete-missing toggle | ✅ | ❌ always on |
+| Defaults for new routes | ✅ Preferences | ❌ fixed |
+| Import/Export settings JSON | ✅ | ❌ |
+| Shortcuts / Siri (App Intents) | ❌ possible, not built | ✅ |
+| Dry-run mode toggle | ✅ (plus Preview) | n/a — Preview instead |
+| CLI, `launchd` schedule, menu bar, event-driven auto-sync | ✅ Mac-only | n/a — platform-inherent (iOS gets App Intents + best-effort `BGAppRefreshTask`) |
+
+The ❌ cells are the open parity gaps.
 
 ## Build and Release Commands
 
@@ -162,7 +192,7 @@ macOS and iOS version **independently** — separate `MARKETING_VERSION`/`CURREN
 
 ## Testing
 
-- Unit tests exist in `BusyMirrorTests/` for `BlockMath`, `EventFilters`, `MirrorUtils`, `SettingsPayload`, and `PlannedChange` (75 tests total) — these cover code shared with iOS too, since the source files are the same. Run: `xcodebuild -project BusyMirror.xcodeproj -scheme BusyMirror -destination 'platform=macOS' -only-testing:BusyMirrorTests test`.
+- Unit tests exist in `BusyMirrorTests/` for `BlockMath`, `EventFilters`, `MirrorUtils`, `SettingsPayload`, `PlannedChange`/`PrefixMode`, and `Route` JSON coding (82 tests total) — these cover code shared with iOS too, since the source files are the same. Run: `xcodebuild -project BusyMirror.xcodeproj -scheme BusyMirror -destination 'platform=macOS' -only-testing:BusyMirrorTests test`.
 - When adding logic, prefer extracting pure functions (e.g., block merging, gap calculation, filter logic, mirror detection) so they can be unit-tested — this is also what keeps a function usable from both targets.
 - Manual testing checklist for macOS releases:
   1. Grant Calendar permission.

@@ -51,6 +51,33 @@ struct Route: Identifiable, Hashable, Codable {
     }
 }
 
+// The three states of Route.titlePrefix as a UI choice, shared by both apps' route editors.
+enum PrefixMode: String, CaseIterable, Identifiable {
+    case global = "Global"   // titlePrefix == nil: inherit the app's global prefix
+    case custom = "Custom"   // non-empty: this route's own prefix
+    case none = "None"       // "": no prefix at all
+
+    var id: String { rawValue }
+
+    static func from(_ titlePrefix: String?) -> (mode: PrefixMode, customText: String) {
+        switch titlePrefix {
+        case .none: return (.global, "")
+        case .some(let p) where p.isEmpty: return (.none, "")
+        case .some(let p): return (.custom, p)
+        }
+    }
+
+    // Custom with empty text resolves to "" — an empty custom prefix *is* no prefix, and
+    // reads back as None.
+    func resolve(customText: String) -> String? {
+        switch self {
+        case .global: return nil
+        case .none: return ""
+        case .custom: return customText
+        }
+    }
+}
+
 struct MirrorConfig {
     let daysBack: Int
     let daysForward: Int
