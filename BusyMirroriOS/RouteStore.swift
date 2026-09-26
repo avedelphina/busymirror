@@ -34,12 +34,6 @@ final class RouteStore {
         set { UserDefaults.standard.set(newValue, forKey: "excludedOrganizerFilters") }
     }
 
-    private func parseFilterTerms(_ raw: String) -> [String] {
-        raw.split { $0 == "\n" || $0 == "," }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
-    }
-
     func requestAccess() async throws -> Bool {
         try await eventStore.requestFullAccessToEvents()
     }
@@ -82,6 +76,8 @@ final class RouteStore {
         var lines: [String] = []
         let engine = MirrorEngine(log: { lines.append($0) })
         engine.onPlannedChange = onChange
+        // No global work-hours/accepted-only setting on iOS: those apply only where a route turns them on.
+        let hours = route.workHours(globalEnabled: false, globalStart: 9, globalEnd: 17)
         let config = MirrorConfig(
             daysBack: defaultSyncDaysBack,
             daysForward: defaultSyncDaysForward,
@@ -92,12 +88,12 @@ final class RouteStore {
             overlapMode: route.overlap,
             titlePrefix: route.titlePrefix ?? titlePrefix,
             placeholderTitle: placeholderTitle,
-            filterByWorkHours: false,
-            workHoursStart: 9,
-            workHoursEnd: 17,
-            excludedTitleFilterTerms: parseFilterTerms(excludedTitleFiltersRaw),
-            excludedOrganizerFilterTerms: parseFilterTerms(excludedOrganizerFiltersRaw),
-            mirrorAcceptedOnly: false,
+            filterByWorkHours: hours.enabled,
+            workHoursStart: hours.start,
+            workHoursEnd: hours.end,
+            excludedTitleFilterTerms: route.titleFilterTerms(global: parseFilterTerms(excludedTitleFiltersRaw)),
+            excludedOrganizerFilterTerms: route.organizerFilterTerms(global: parseFilterTerms(excludedOrganizerFiltersRaw)),
+            mirrorAcceptedOnly: route.mirrorAcceptedOnly ?? false,
             autoDeleteMissing: true,
             writeEnabled: writeEnabled,
             syncReminders: route.syncReminders,

@@ -26,6 +26,7 @@ struct PreferencesView: View {
     @AppStorage("titlePrefix") private var titlePrefix: String = "🪞 "
     @AppStorage("placeholderTitle") private var placeholderTitle: String = "Busy"
     @AppStorage("autoDeleteMissing") private var autoDeleteMissing: Bool = true
+    @AppStorage("autoCheckForUpdates") private var autoCheckForUpdates: Bool = true
 
     private static let intFormatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -158,8 +159,23 @@ struct PreferencesView: View {
                     .font(.footnote)
             }
             .disabled(disabled)
+
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $autoCheckForUpdates)
+                HStack {
+                    Button("Check Now") { Task { await appController.checkForUpdatesInteractively() } }
+                    if let update = appController.availableUpdate {
+                        Text("Version \(update.version) is available.").foregroundStyle(.secondary)
+                    } else {
+                        Text("Version \(appController.currentVersion)").foregroundStyle(.secondary)
+                    }
+                }
+                Text("Asks GitHub for the latest release at launch, at most once a day. Nothing about you or your calendars is sent.")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 560)
+        .frame(width: 480, height: 640)
     }
 }

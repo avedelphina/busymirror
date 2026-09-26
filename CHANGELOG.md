@@ -9,6 +9,19 @@ see ROADMAP.md).
 
 Collects changes until a release renames this heading (and bumps the version). Nothing pending.
 
+## [1.12.0] - 2026-09-26
+
+### Added
+- **Update checking**: the app asks GitHub for the latest release at launch (at most once a day) and shows "Update available" in the menu bar dropdown; "Check for Updates…" in the app menu and Preferences checks on demand. It only links to the download page — nothing is installed automatically. Turn the automatic check off in Preferences → Updates. Needs the new network-client entitlement.
+- **DMG download**: releases now ship a signed, notarized `.dmg` (drag to Applications) alongside the `.zip`.
+- **Per-route filters**: each route can skip events by title or organizer — added to the global filters, or replacing them with "Ignore global title/organizer filters". Applies to Sync Now, Preview and background auto-sync.
+- **Per-route Accepted only and Work hours**: each is Global / On / Off per route (Work hours with its own hours).
+
+## [iOS 1.3.0] - 2026-09-26
+
+### Added
+- **Per-route filters** in the route form: skip events by title or organizer (added to the filters in Settings, or replacing them with "Ignore filters from Settings"), and — new on iOS — per-route **Accepted events only** and **Limit to work hours**. Applies to in-app runs, Preview and Shortcuts.
+
 ## [1.11.0] - 2026-09-20
 
 ### Added

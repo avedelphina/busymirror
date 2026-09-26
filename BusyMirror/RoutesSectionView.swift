@@ -109,6 +109,33 @@ struct RoutesSectionView: View {
                 RoutePrefixEditor(titlePrefix: routeBinding.titlePrefix, globalPrefix: titlePrefix)
                     .disabled(isRunning)
 
+                TextField("Skip titles containing… (comma separated)", text: routeBinding.excludedTitleFilters)
+                    .disabled(isRunning)
+                    .help("Title filter for this route only. Case-insensitive. Added to the global list in Preferences unless the toggle below is on.")
+                TextField("Skip organizers containing… (comma separated)", text: routeBinding.excludedOrganizerFilters)
+                    .disabled(isRunning)
+                    .help("Organizer filter for this route only. Case-insensitive. Added to the global list in Preferences unless the toggle below is on.")
+                Toggle("Ignore global title/organizer filters", isOn: routeBinding.overrideGlobalFilters)
+                    .disabled(isRunning)
+                    .help("If ON, only this route's own lists above apply (empty = mirror everything). If OFF, they're added to the global lists in Preferences.")
+                RouteOverrideEditor(title: "Accepted only", choice: routeBinding.mirrorAcceptedOnly)
+                    .disabled(isRunning)
+                    .help("Global: follow Preferences. On: skip events you haven't accepted (Maybe still mirrors). Off: mirror regardless.")
+                RouteOverrideEditor(title: "Work hours", choice: routeBinding.filterByWorkHours) {
+                    Stepper("\(route.workHoursStart ?? 9):00", value: hourBinding(routeBinding.workHoursStart, default: 9), in: 0...((route.workHoursEnd ?? 17) - 1))
+                    Text("–")
+                    Stepper("\(route.workHoursEnd ?? 17):00", value: hourBinding(routeBinding.workHoursEnd, default: 17), in: ((route.workHoursStart ?? 9) + 1)...24)
+                }
+                .onChange(of: route.filterByWorkHours) { _, on in
+                    // Seed the hours the steppers show, so they can't differ from what the run uses (the global hours).
+                    if on == true {
+                        if routeBinding.workHoursStart.wrappedValue == nil { routeBinding.workHoursStart.wrappedValue = 9 }
+                        if routeBinding.workHoursEnd.wrappedValue == nil { routeBinding.workHoursEnd.wrappedValue = 17 }
+                    }
+                }
+                .disabled(isRunning)
+                .help("Global: follow Preferences. On: only mirror timed events starting within this route's own hours. Off: no hour limit.")
+
                 Toggle("Mirror already-mirrored events", isOn: routeBinding.mirrorMirroredEvents)
                     .disabled(isRunning)
                     .help("Off (default): source events that are themselves mirrors (from any route, any device) are skipped, preventing re-mirroring. Turn on only for a deliberate chain (A → B → C) — enabling it on a route that loops back to its own target duplicates events on every run.")
@@ -226,6 +253,39 @@ struct RoutesSectionView: View {
             }
             .frame(width: 170)
             .help("allow = always place; skipCovered = skip if target already has a block covering the time; fillGaps = only fill uncovered gaps within the source block.")
+        }
+        .font(.subheadline)
+    }
+}
+
+// A non-optional Int stepper over an optional per-route value, writing back only when touched.
+private func hourBinding(_ b: Binding<Int?>, default d: Int) -> Binding<Int> {
+    Binding(get: { b.wrappedValue ?? d }, set: { b.wrappedValue = $0 })
+}
+
+/// Global / On / Off for an optional per-route Bool (nil / true / false), with optional extra
+/// controls shown while On.
+private struct RouteOverrideEditor<Extra: View>: View {
+    let title: String
+    @Binding var choice: Bool?
+    @ViewBuilder let extra: () -> Extra
+
+    init(title: String, choice: Binding<Bool?>, @ViewBuilder extra: @escaping () -> Extra = { EmptyView() }) {
+        self.title = title
+        _choice = choice
+        self.extra = extra
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Picker(title, selection: Binding(get: { OverrideChoice(choice) }, set: { choice = $0.value })) {
+                ForEach(OverrideChoice.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 200)
+            if choice == true { extra() }
         }
         .font(.subheadline)
     }

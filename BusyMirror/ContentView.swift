@@ -438,7 +438,8 @@ struct ContentView: View {
     // The one place a route's MirrorConfig is built — real runs and Preview both use it, so a
     // preview can't drift from what Sync Now would do.
     private func makeRouteConfig(for r: Route, writeEnabled: Bool) -> MirrorConfig {
-        MirrorConfig(
+        let hours = r.workHours(globalEnabled: filterByWorkHours, globalStart: workHoursStart, globalEnd: workHoursEnd)
+        return MirrorConfig(
             daysBack: daysBack,
             daysForward: daysForward,
             mergeGapMin: max(0, r.mergeGapHours * 60),
@@ -448,12 +449,12 @@ struct ContentView: View {
             overlapMode: r.overlap,
             titlePrefix: r.titlePrefix ?? titlePrefix,
             placeholderTitle: placeholderTitle,
-            filterByWorkHours: filterByWorkHours,
-            workHoursStart: workHoursStart,
-            workHoursEnd: workHoursEnd,
-            excludedTitleFilterTerms: excludedTitleFilterTerms,
-            excludedOrganizerFilterTerms: excludedOrganizerFilterTerms,
-            mirrorAcceptedOnly: mirrorAcceptedOnly,
+            filterByWorkHours: hours.enabled,
+            workHoursStart: hours.start,
+            workHoursEnd: hours.end,
+            excludedTitleFilterTerms: r.titleFilterTerms(global: excludedTitleFilterTerms),
+            excludedOrganizerFilterTerms: r.organizerFilterTerms(global: excludedOrganizerFilterTerms),
+            mirrorAcceptedOnly: r.mirrorAcceptedOnly ?? mirrorAcceptedOnly,
             autoDeleteMissing: autoDeleteMissing,
             writeEnabled: writeEnabled,
             syncReminders: r.syncReminders,

@@ -17,6 +17,13 @@ struct BusyMirrorApp: App {
                 .frame(minWidth: 720, minHeight: 520)
         }
         .defaultSize(width: 1120, height: 760)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await appController.checkForUpdatesInteractively() }
+                }
+            }
+        }
 
         MenuBarExtra("BusyMirror", systemImage: menuBarIcon) {
             BusyMirrorMenuBarView()

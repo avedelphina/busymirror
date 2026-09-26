@@ -15,9 +15,11 @@ final class BusyMirrorAppController: ObservableObject {
     @Published private(set) var isMainWindowVisible = false
     @Published private(set) var lastRunFailed = false
     @Published private(set) var autoSyncArmed = false
+    @Published var availableUpdate: UpdateInfo?   // set by UpdateChecker.swift (an extension can't reach private(set))
 
     init() {
         refreshLastRunStatus()
+        Task { await checkForUpdatesIfDue() }
     }
 
     /// Re-reads the shared lastRun* UserDefaults keys. Call after any run —
@@ -215,6 +217,7 @@ final class BusyMirrorAppController: ObservableObject {
             let targets = validTargetIDs.compactMap(calendar(id:))
             guard !targets.isEmpty else { continue }
             ranAnyRoute = true
+            let hours = route.workHours(globalEnabled: settings.filterByWorkHours, globalStart: settings.workHoursStart, globalEnd: settings.workHoursEnd)
             let config = MirrorConfig(
                 // Live @AppStorage keys, not the saved blob: nothing re-saves the blob when only a
                 // *default* changes, so it can still hold the old default while the UI uses the new one.
@@ -227,12 +230,12 @@ final class BusyMirrorAppController: ObservableObject {
                 overlapMode: route.overlap,
                 titlePrefix: route.titlePrefix ?? settings.titlePrefix,
                 placeholderTitle: settings.placeholderTitle,
-                filterByWorkHours: settings.filterByWorkHours,
-                workHoursStart: settings.workHoursStart,
-                workHoursEnd: settings.workHoursEnd,
-                excludedTitleFilterTerms: settings.excludedTitleFilters.map { $0.lowercased() },
-                excludedOrganizerFilterTerms: settings.excludedOrganizerFilters.map { $0.lowercased() },
-                mirrorAcceptedOnly: settings.mirrorAcceptedOnly,
+                filterByWorkHours: hours.enabled,
+                workHoursStart: hours.start,
+                workHoursEnd: hours.end,
+                excludedTitleFilterTerms: route.titleFilterTerms(global: settings.excludedTitleFilters.map { $0.lowercased() }),
+                excludedOrganizerFilterTerms: route.organizerFilterTerms(global: settings.excludedOrganizerFilters.map { $0.lowercased() }),
+                mirrorAcceptedOnly: route.mirrorAcceptedOnly ?? settings.mirrorAcceptedOnly,
                 autoDeleteMissing: settings.autoDeleteMissing,
                 writeEnabled: true,
                 syncReminders: route.syncReminders,
@@ -274,6 +277,14 @@ struct BusyMirrorMenuBarView: View {
             Text(appController.autoSyncArmed ? "Auto-sync: watching for calendar changes." : "Auto-sync: not active (add a saved route to enable).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if let update = appController.availableUpdate {
+                Button {
+                    NSWorkspace.shared.open(update.url)
+                } label: {
+                    Label("Update available: \(update.version)", systemImage: "arrow.down.circle")
+                }
+            }
 
             Divider()
 

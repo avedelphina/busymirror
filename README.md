@@ -7,7 +7,7 @@ There's a macOS app and a separate, standalone iOS/iPadOS app (own routes, own c
 On macOS, BusyMirror runs as a standard app (Dock icon, ⌘Q to quit) and also has a menu bar icon for quick sync/status without opening the main window.
 
 ## Get it
-- **macOS (15.5+)** — download the latest signed and notarized build from [Releases](https://github.com/avedelphina/busymirror/releases/latest), unzip it, and drag `BusyMirror.app` to Applications.
+- **macOS (15.5+)** — download the latest signed and notarized build from [Releases](https://github.com/avedelphina/busymirror/releases/latest), open the `.dmg`, and drag `BusyMirror.app` to Applications (a `.zip` is attached too).
 - **iPhone / iPad (public beta, iOS/iPadOS 17+)** — [join the beta on TestFlight](https://testflight.apple.com/join/MRBKZ4t3). You'll need Apple's free TestFlight app. It's a beta: builds expire after 90 days (TestFlight will offer the next one), and you can send feedback or crash reports straight from TestFlight. Not on the App Store yet.
 
 ## What it does (current)
@@ -42,7 +42,7 @@ Option A — Xcode
 
 Option B — Makefile (reproducible)
 - Build Release: `make build-release`
-- Package ZIP: `make package` (creates `BusyMirror-<version>-macOS.zip` + `.sha256`)
+- Package DMG + ZIP: `make package` (creates `BusyMirror-<version>-macOS.dmg` and `.zip`, each with a `.sha256`; `make dmg` for just the DMG)
 - Built app: `build/DerivedData/Build/Products/Release/BusyMirror.app`
 
 See `CHANGELOG.md` for notable changes.
@@ -119,10 +119,11 @@ Legend: ✅ has it · ❌ missing — a parity gap · — not applicable (platfo
 | Clean Up Placeholders | ✅ | ✅ |
 | Calendar color chips | ✅ | ✅ |
 | Global mirror prefix, title/organizer skip filters | ✅ Preferences | ✅ Settings |
+| Per-route title/organizer skip filters (added to, or replacing, the global ones) | ✅ | ✅ |
 | Editable placeholder title | ✅ | ❌ fixed "Busy" |
 | Sync window (days back / forward) | ✅ default 1 / 14 | ❌ fixed 1 / 14 |
-| Work Hours filter | ✅ | ❌ |
-| Accepted-only filter | ✅ | ❌ |
+| Work Hours filter | ✅ global + per-route | ✅ per-route only |
+| Accepted-only filter | ✅ global + per-route | ✅ per-route only |
 | Toggle for auto-deleting mirrors whose source disappeared | ✅ | ❌ always on |
 | Defaults for newly added routes | ✅ Preferences | ❌ fixed |
 | Import / Export settings JSON | ✅ same-machine backup | — not planned (see below) |
@@ -138,7 +139,7 @@ Legend: ✅ has it · ❌ missing — a parity gap · — not applicable (platfo
 - **Sync horizon.** Both apps default to 1 day back / 14 forward. Mac lets you change it in Preferences; iOS is fixed until it gets the same setting, so a Mac with a customized window can mirror a different span than your iPhone.
 - **Both apps write by default.** Sync Now on Mac and Run on iOS change calendars immediately. Use Preview first — on Mac from a route card or "Preview all", on iOS from a new route's form (it works before you even save) or a saved route's ⋯ menu. Mac also keeps an optional Dry Run switch; the command line is different and stays safe: it does nothing unless you pass `--write 1`.
 - **Automatic sync.** Mac watches for calendar changes (debounced), also syncs on wake, runs as a login item with a 30-minute fallback timer, and can be scheduled or scripted. iOS has no persistent process: it syncs when opened, from a Shortcuts automation, or via a background refresh that iOS runs at its own discretion — no guarantee it runs at all. iOS shows "Last synced" so it never implies live sync.
-- **Filters.** Mac can skip events outside Work Hours or that you haven't accepted; iOS mirrors every event in the window (only the title/organizer skip filters apply).
+- **Filters.** Mac can skip events outside Work Hours or that you haven't accepted; on iOS those two are per-route switches (there is no global setting), and only the title/organizer skip filters also have a global list.
 - **Placeholder title.** Mac's is editable (default "Busy"); iOS always uses "Busy". If both apps mirror into the same calendar, keep Mac's at the default or the placeholders will differ.
 - **Routes and settings are per device and can't be moved between devices.** Calendar identifiers are local to each device's calendar database, so a route file from another device generally won't resolve — and Mac drops routes whose calendars it can't find at its next calendar reload. Mac's Import/Export is therefore a same-machine backup, not a way to copy routes to your iPhone, and iOS deliberately has no equivalent.
 - **Run scope.** Mac's Sync Now runs all routes as one run with a shared loop-guard; iOS runs each route on its own (Sync All loops over them). Results are the same unless two routes would mirror the same event into the same target.

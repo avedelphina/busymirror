@@ -51,6 +51,7 @@ BusyMirror/                      # macOS app target
 ├── CalendarsSectionView.swift   # Calendar picker section
 ├── ScheduleSectionView.swift    # launchd scheduling UI
 ├── LogSectionView.swift         # Activity log view
+├── UpdateChecker.swift          # GitHub-releases update check (Mac only)
 ├── PreferencesView.swift        # Settings window (@AppStorage-backed defaults)
 ├── MenuBarSupport.swift         # `BusyMirrorAppController` (state coordinator, auto-sync) + menu bar view
 ├── MirrorEngine.swift           # EventKit mirror engine (read, deduplicate, merge, create/update/delete) — shared with iOS
@@ -93,7 +94,7 @@ BusyMirroriOS/
 
 The iOS target shares these files from `BusyMirror/` via a `PBXFileSystemSynchronizedRootGroup` target-membership exception (see `project.pbxproj` — no file duplication, no separate copies to keep in sync): `MirrorEngine.swift`, `MirrorConfig.swift`, `BlockMath.swift`, `EventFilters.swift`, `MirrorUtils.swift`, `AppLogStore.swift`, `CalendarDisplay.swift`, `PlannedChange.swift`, `PlannedChangesSheet.swift`. `Route`, `OverlapMode` and `PrefixMode` live in `MirrorConfig.swift` (not `ContentView.swift`) specifically so both targets can use them. These files must stay AppKit-free (pure Foundation/EventKit, `#if os(macOS)` for any platform-specific branch — see `CalendarDisplay.swift`'s `calColor` for the pattern) since they compile into both targets.
 
-Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`) is excluded from the iOS target and stays Mac-only.
+Everything else in `BusyMirror/` (AppKit, `launchd`, CLI, menu bar, preferences window: `ContentView.swift`, `BusyMirrorApp.swift`, `MenuBarSupport.swift`, `PreferencesView.swift`, `RoutesSectionView.swift`, `CalendarsSectionView.swift`, `ScheduleSectionView.swift`, `LogSectionView.swift`, `UpdateChecker.swift`) is excluded from the iOS target and stays Mac-only.
 
 The public TestFlight beta link is in `README.md` under "Get it" — update it there if the beta group or link ever changes.
 
@@ -137,7 +138,8 @@ Engine-level differences worth knowing when touching shared code (all deliberate
 - **`isMultiRouteRun`:** Mac always runs routes together (`true`, shared `sessionGuard`); iOS runs each route alone (`false`). The flag changes legacy-event auto-delete behavior, so a Mac preview must pass `true`.
 - **Defaults:** both apps default to a 1-day-back / 14-day-forward window, from the shared `defaultSyncDaysBack`/`defaultSyncDaysForward` in `MirrorConfig.swift` (Mac: `@AppStorage` defaults, the `SettingsPayload` decode fallback and the Preferences placeholders; iOS: fixed in `RouteStore`). Mac's background auto-sync reads the live `daysBack`/`daysForward` `@AppStorage` keys rather than the saved `settings.v2` blob, because nothing re-saves the blob when only a *default* moves — the blob can hold the old default while the UI uses the new one. Both apps now write by default (Mac's `writeEnabled` starts `true`; the Dry Run toolbar switch remains, chiefly for manual-selection mode); the **CLI** must stay dry-run unless `--write 1` is passed, so `--write` defaults to `false` explicitly — don't make it follow `writeEnabled` again, or scripted runs would start writing.
 - **Placeholder title:** Mac configurable, iOS the constant `"Busy"` in `RouteStore`.
-- **iOS hardcodes** `filterByWorkHours: false`, `mirrorAcceptedOnly: false`, `autoDeleteMissing: true` in `RouteStore.run`.
+- **iOS hardcodes** `autoDeleteMissing: true` in `RouteStore.run`. It has no global work-hours/accepted-only setting: `RouteStore.run` passes `false` as the global value, so those apply only where a route turns them on.
+- **Per-route filters** (`Route` in `MirrorConfig.swift`): title/organizer lists (`excludedTitleFilters`/`excludedOrganizerFilters`, added to the global list unless `overrideGlobalFilters`), plus optional `filterByWorkHours`/`workHoursStart`/`workHoursEnd`/`mirrorAcceptedOnly` (nil = inherit global). Every config builder must resolve them through `Route.titleFilterTerms/organizerFilterTerms/workHours` rather than reading the globals directly.
 - **No server-side "Private" flag exists or can:** EventKit's public headers have nothing for privacy/classification. A "Mark Private" feature was built on an Objective-C runtime hack, never worked reliably, and was removed in 1.5.0 (it would also have blocked App Store review). Don't reintroduce it.
 
 ## Build and Release Commands
@@ -149,7 +151,8 @@ make build-debug      # Debug build via xcodebuild
 make build-release    # Release build via xcodebuild
 make sign-app         # Sign the Release app with the Developer ID cert (strip xattr, codesign)
 make notarize         # sign-app, then submit to Apple's notary service and staple the ticket
-make package          # notarize, then create BusyMirror-<version>-macOS.zip + .sha256
+make dmg              # notarize, then build a signed, notarized, stapled BusyMirror-<version>-macOS.dmg + .sha256
+make package          # dmg, then also BusyMirror-<version>-macOS.zip + .sha256
 make app              # Verify signed app exists
 make clean            # Clean derived data
 ```
@@ -158,11 +161,11 @@ Signing happens in a `/tmp` scratch dir, not in-repo — this repo lives under i
 
 Built products:
 - Unsigned release: `build/DerivedData/Build/Products/Release/BusyMirror.app`
-- Signed + notarized: zipped as `BusyMirror-<version>-macOS.zip` at the repo root
+- Signed + notarized: `BusyMirror-<version>-macOS.dmg` and `.zip` at the repo root
 
 ### CI (macOS releases)
 
-`.github/workflows/release.yml` triggers on pushing a `v*` tag: runs the unit test suite, then reuses this same `make package` (with `SIGN_IDENTITY`/`NOTARY_PROFILE` overridden for the ephemeral CI keychain) so the CI build path matches the local one exactly. Signs by certificate SHA-1, not common name — `codesign` can fail to match `Developer ID Application: TOMÁŠ KRÁČMAR` by string on some locales/encodings (an NFC/NFD Unicode normalization mismatch, hit for real running this by hand), so the workflow resolves the identity hash after import instead. Needs 5 repo secrets (`MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `AC_API_KEY_P8_BASE64`) to actually notarize — without them it'll fail at signing/notarization, which is expected until they're added in repo Settings → Secrets and variables → Actions. Creates a GitHub Release with the zip attached on success. iOS isn't in this pipeline — TestFlight distribution is manual via Xcode Organizer.
+`.github/workflows/release.yml` triggers on pushing a `v*` tag: runs the unit test suite, then reuses this same `make package` (with `SIGN_IDENTITY`/`NOTARY_PROFILE` overridden for the ephemeral CI keychain) so the CI build path matches the local one exactly. Signs by certificate SHA-1, not common name — `codesign` can fail to match `Developer ID Application: TOMÁŠ KRÁČMAR` by string on some locales/encodings (an NFC/NFD Unicode normalization mismatch, hit for real running this by hand), so the workflow resolves the identity hash after import instead. Needs 5 repo secrets (`MACOS_CERTIFICATE_P12_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `AC_API_KEY_P8_BASE64`) to actually notarize — without them it'll fail at signing/notarization, which is expected until they're added in repo Settings → Secrets and variables → Actions. Creates a GitHub Release with the DMG and zip (and their .sha256 files) attached on success. iOS isn't in this pipeline — TestFlight distribution is manual via Xcode Organizer.
 
 ### Xcode
 
@@ -208,6 +211,10 @@ macOS and iOS version **independently** — separate `MARKETING_VERSION`/`CURREN
 - **Signing:** macOS releases are Developer ID signed and notarized (`make package`, since 1.10.0) — no more ad-hoc/Gatekeeper workaround needed. iOS builds are automatically signed for TestFlight/device installs.
 - **Loop guard:** a `sessionGuard` set prevents mirroring an event into the same target twice in one run. Cross-mirror detection is primarily via the `mirror://...` URL tag every mirror event carries (`MirrorUtils.swift`), not the title prefix — the URL check is prefix/app/device-independent, which is what makes chained mirroring across the Mac/iOS boundary reliable. Title-prefix matching is a secondary fallback only.
 - **Logging:** log files are written to the user's `~/Library/Logs/BusyMirror/` (macOS) or the app's container (iOS). No log data is transmitted externally.
+
+## Update checking (macOS only)
+
+`UpdateChecker.swift`: a launch-time (once per 24h, `autoCheckForUpdates` toggle in Preferences, default on) plus manual "Check for Updates…" lookup of `releases/latest` on the public GitHub repo, compared against `CFBundleShortVersionString` with `isNewerVersion`. It only surfaces a link (menu bar item, alert) to the release page — no Sparkle, no auto-install (no third-party deps). Needs the `com.apple.security.network.client` entitlement. The API URL is hard-coded to `avedelphina/busymirror`; update it if the repo moves. iOS relies on TestFlight/App Store and has none of this.
 
 ## CLI and Scheduling
 

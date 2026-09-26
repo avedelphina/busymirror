@@ -306,6 +306,13 @@ private struct RouteFormView: View {
     @State private var titlePrefixText: String
     @State private var mirrorMirroredEvents: Bool
     @State private var passThroughMirroredTitles: Bool
+    @State private var excludedTitleFilters: String
+    @State private var excludedOrganizerFilters: String
+    @State private var overrideGlobalFilters: Bool
+    @State private var limitWorkHours: Bool
+    @State private var workHoursStart: Int
+    @State private var workHoursEnd: Int
+    @State private var acceptedOnly: Bool
 
     init(calendars: [EKCalendar], existing: Route?, globalPrefix: String, calendarsWithMirrors: Set<String>, onPreview: @escaping (Route) async -> [PlannedChange], onSave: @escaping (Route) -> Void) {
         self.calendars = calendars
@@ -327,6 +334,13 @@ private struct RouteFormView: View {
         _titlePrefixText = State(initialValue: parsedPrefix.customText)
         _mirrorMirroredEvents = State(initialValue: existing?.mirrorMirroredEvents ?? false)
         _passThroughMirroredTitles = State(initialValue: existing?.passThroughMirroredTitles ?? false)
+        _excludedTitleFilters = State(initialValue: existing?.excludedTitleFilters ?? "")
+        _excludedOrganizerFilters = State(initialValue: existing?.excludedOrganizerFilters ?? "")
+        _overrideGlobalFilters = State(initialValue: existing?.overrideGlobalFilters ?? false)
+        _limitWorkHours = State(initialValue: existing?.filterByWorkHours ?? false)
+        _workHoursStart = State(initialValue: existing?.workHoursStart ?? 9)
+        _workHoursEnd = State(initialValue: existing?.workHoursEnd ?? 17)
+        _acceptedOnly = State(initialValue: existing?.mirrorAcceptedOnly ?? false)
     }
 
     var body: some View {
@@ -399,6 +413,21 @@ private struct RouteFormView: View {
                         : "Off (default): source events that are themselves mirrors (from any route, any device) are skipped, preventing re-mirroring. Turn on only for a deliberate chain (A → B → C) — enabling it on a route that loops back to its own target will duplicate events on every run.")
                 }
                 Section {
+                    TextField("Skip titles containing…", text: $excludedTitleFilters, axis: .vertical)
+                    TextField("Skip organizers containing…", text: $excludedOrganizerFilters, axis: .vertical)
+                    Toggle("Ignore filters from Settings", isOn: $overrideGlobalFilters)
+                    Toggle("Accepted events only", isOn: $acceptedOnly)
+                    Toggle("Limit to work hours", isOn: $limitWorkHours)
+                    if limitWorkHours {
+                        Stepper("From \(workHoursStart):00", value: $workHoursStart, in: 0...(workHoursEnd - 1))
+                        Stepper("To \(workHoursEnd):00", value: $workHoursEnd, in: (workHoursStart + 1)...24)
+                    }
+                } header: {
+                    Text("Filters")
+                } footer: {
+                    Text("Skip terms are comma or line separated and case-insensitive. They apply to this route, in addition to the skip filters in Settings unless you turn those off here. Accepted only still mirrors \"Maybe\" events; work hours ignore all-day events.")
+                }
+                Section {
                     Toggle("Private", isOn: $privacy)
                     Toggle("Copy description", isOn: $copyNotes)
                         .disabled(privacy)
@@ -464,7 +493,15 @@ private struct RouteFormView: View {
             allDay: allDay,
             titlePrefix: resolvedPrefix,
             mirrorMirroredEvents: mirrorMirroredEvents,
-            passThroughMirroredTitles: passThroughMirroredTitles
+            passThroughMirroredTitles: passThroughMirroredTitles,
+            excludedTitleFilters: excludedTitleFilters,
+            excludedOrganizerFilters: excludedOrganizerFilters,
+            overrideGlobalFilters: overrideGlobalFilters,
+            // nil = off: iOS has no global setting to inherit
+            filterByWorkHours: limitWorkHours ? true : nil,
+            workHoursStart: limitWorkHours ? workHoursStart : nil,
+            workHoursEnd: limitWorkHours ? workHoursEnd : nil,
+            mirrorAcceptedOnly: acceptedOnly ? true : nil
         )
     }
 }

@@ -26,6 +26,45 @@ final class RouteCodingTests: XCTestCase {
         XCTAssertTrue(decoded.passThroughMirroredTitles)
     }
 
+    func testRouteFiltersRoundTripAndParse() throws {
+        var route = makeRoute(titlePrefix: nil)
+        route.excludedTitleFilters = "Standup, Lunch\n focus "
+        route.excludedOrganizerFilters = "boss@x.com"
+        let decoded = try roundTrip(route)
+        XCTAssertEqual(parseFilterTerms(decoded.excludedTitleFilters), ["standup", "lunch", "focus"])
+        XCTAssertEqual(parseFilterTerms(decoded.excludedOrganizerFilters), ["boss@x.com"])
+    }
+
+    func testRouteFiltersOverrideAndInherit() throws {
+        var route = makeRoute(titlePrefix: nil)
+        route.excludedTitleFilters = "Lunch"
+        XCTAssertEqual(route.titleFilterTerms(global: ["standup"]), ["standup", "lunch"])
+        route.overrideGlobalFilters = true
+        XCTAssertEqual(route.titleFilterTerms(global: ["standup"]), ["lunch"])
+        route.excludedTitleFilters = ""
+        XCTAssertEqual(route.titleFilterTerms(global: ["standup"]), [])
+        XCTAssertEqual(route.organizerFilterTerms(global: ["a@x.com"]), [])
+        route.overrideGlobalFilters = false
+        XCTAssertEqual(route.organizerFilterTerms(global: ["a@x.com"]), ["a@x.com"])
+    }
+
+    func testWorkHoursAndAcceptedOnlyInheritThenOverride() throws {
+        var route = makeRoute(titlePrefix: nil)
+        var h = route.workHours(globalEnabled: true, globalStart: 8, globalEnd: 18)
+        XCTAssertEqual([h.enabled ? 1 : 0, h.start, h.end], [1, 8, 18])
+        route.filterByWorkHours = false
+        route.workHoursStart = 10
+        h = route.workHours(globalEnabled: true, globalStart: 8, globalEnd: 18)
+        XCTAssertEqual([h.enabled ? 1 : 0, h.start, h.end], [0, 10, 18])
+        route.mirrorAcceptedOnly = true
+        let decoded = try roundTrip(route)
+        XCTAssertEqual(decoded.filterByWorkHours, false)
+        XCTAssertEqual(decoded.workHoursStart, 10)
+        XCTAssertNil(decoded.workHoursEnd)
+        XCTAssertEqual(decoded.mirrorAcceptedOnly, true)
+        XCTAssertEqual([OverrideChoice(nil), OverrideChoice(true), OverrideChoice(false)], [.global, .on, .off])
+    }
+
     func testEmptyPrefixStaysDistinctFromNil() throws {
         XCTAssertEqual(try roundTrip(makeRoute(titlePrefix: "")).titlePrefix, "")
         XCTAssertNil(try roundTrip(makeRoute(titlePrefix: nil)).titlePrefix)
@@ -42,5 +81,10 @@ final class RouteCodingTests: XCTestCase {
         XCTAssertFalse(decoded.mirrorMirroredEvents)
         XCTAssertFalse(decoded.passThroughMirroredTitles)
         XCTAssertFalse(decoded.syncReminders)
+        XCTAssertEqual(decoded.excludedTitleFilters, "")
+        XCTAssertEqual(decoded.excludedOrganizerFilters, "")
+        XCTAssertFalse(decoded.overrideGlobalFilters)
+        XCTAssertNil(decoded.filterByWorkHours)
+        XCTAssertNil(decoded.mirrorAcceptedOnly)
     }
 }

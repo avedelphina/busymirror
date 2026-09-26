@@ -21,6 +21,7 @@ ExportOptions.plist
 *.swp
 *.profraw
 *.zip
+*.dmg
 *.sha256
 dist/
 

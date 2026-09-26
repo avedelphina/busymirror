@@ -14,7 +14,7 @@ SIGN_IDENTITY ?= Developer ID Application: TOMÁŠ KRÁČMAR (P32JC2N6Y9)
 #   xcrun notarytool store-credentials hermes-notary --apple-id <apple-id> --team-id P32JC2N6Y9 --password <app-specific-password>
 NOTARY_PROFILE ?= hermes-notary
 
-.PHONY: all clean build-debug build-release sign-app notarize open app package
+.PHONY: all clean build-debug build-release sign-app notarize open app dmg package
 
 all: build-release
 
@@ -80,9 +80,28 @@ notarize: sign-app
 	@mkdir -p "$(dir $(SIGNED_APP_PATH))"
 	@ditto "$(SCRATCH_APP)" "$(SIGNED_APP_PATH)"
 
-package: notarize
+# Drag-to-Applications disk image around the already-notarized, stapled app. The image itself is
+# signed, notarized and stapled too, so Gatekeeper is happy offline. Built in the scratch dir for
+# the same iCloud-xattr reason as signing; only the finished DMG is copied into the repo.
+DMG := BusyMirror-$(VERSION)-macOS.dmg
+
+dmg: notarize
+	@echo "Building $(DMG)…"
+	@rm -rf "$(SCRATCH)/dmg-root" "$(SCRATCH)/$(DMG)"
+	@mkdir -p "$(SCRATCH)/dmg-root"
+	@ditto "$(SCRATCH_APP)" "$(SCRATCH)/dmg-root/BusyMirror.app"
+	@ln -s /Applications "$(SCRATCH)/dmg-root/Applications"
+	@hdiutil create -volname "BusyMirror" -srcfolder "$(SCRATCH)/dmg-root" -ov -format UDZO "$(SCRATCH)/$(DMG)"
+	@codesign --force --timestamp --sign "$(SIGN_IDENTITY)" "$(SCRATCH)/$(DMG)"
+	@xcrun notarytool submit "$(SCRATCH)/$(DMG)" --keychain-profile "$(NOTARY_PROFILE)" --wait
+	@xcrun stapler staple "$(SCRATCH)/$(DMG)"
+	@xcrun stapler validate "$(SCRATCH)/$(DMG)"
+	@ditto "$(SCRATCH)/$(DMG)" "$(DMG)"
+	@shasum -a 256 "$(DMG)" | awk '{print $$1}' > "$(DMG).sha256"
+
+package: dmg
 	@echo "Packaging BusyMirror $(VERSION)…"
 	@ditto --norsrc -c -k --keepParent "$(SCRATCH_APP)" "BusyMirror-$(VERSION)-macOS.zip"
 	@shasum -a 256 "BusyMirror-$(VERSION)-macOS.zip" | awk '{print $$1}' > "BusyMirror-$(VERSION)-macOS.zip.sha256"
 	@rm -rf "$(SCRATCH)"
-	@echo "Created BusyMirror-$(VERSION)-macOS.zip and .sha256"
+	@echo "Created $(DMG) and BusyMirror-$(VERSION)-macOS.zip, each with a .sha256"

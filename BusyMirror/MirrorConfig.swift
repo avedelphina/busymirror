@@ -11,6 +11,13 @@ enum OverlapMode: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+// Comma/newline-separated filter text -> lowercased terms. Global and per-route filters share this format.
+func parseFilterTerms(_ raw: String) -> [String] {
+    raw.split { $0 == "\n" || $0 == "," }
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .filter { !$0.isEmpty }
+}
+
 struct Route: Identifiable, Hashable, Codable {
     let id = UUID()
     var sourceID: String
@@ -24,9 +31,16 @@ struct Route: Identifiable, Hashable, Codable {
     var titlePrefix: String?       // per-route prefix override; nil = use the app's global prefix
     var mirrorMirroredEvents: Bool // if true, don't skip source events that are themselves mirrors (chained mirroring)
     var passThroughMirroredTitles: Bool // if true, copy an already-mirrored source event's title verbatim instead of re-prefixing it (avoids "B: A: Meeting" stacking on chained routes)
-    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix, mirrorMirroredEvents, passThroughMirroredTitles }
+    var excludedTitleFilters: String = ""     // title terms skipped by this route (comma/newline separated); added to the global list unless overrideGlobalFilters
+    var excludedOrganizerFilters: String = "" // same for organizers
+    var overrideGlobalFilters: Bool = false   // true = this route's title/organizer lists replace the global ones (empty = no filtering)
+    var filterByWorkHours: Bool?              // per-route work-hours filter; nil = inherit the app's global setting
+    var workHoursStart: Int?                  // nil = inherit global hours
+    var workHoursEnd: Int?
+    var mirrorAcceptedOnly: Bool?             // nil = inherit the app's global setting
+    enum CodingKeys: String, CodingKey { case sourceID, targetIDs, privacy, copyNotes, syncReminders, mergeGapHours, overlap, allDay, titlePrefix, mirrorMirroredEvents, passThroughMirroredTitles, excludedTitleFilters, excludedOrganizerFilters, overrideGlobalFilters, filterByWorkHours, workHoursStart, workHoursEnd, mirrorAcceptedOnly }
 
-    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil, mirrorMirroredEvents: Bool = false, passThroughMirroredTitles: Bool = false) {
+    init(sourceID: String, targetIDs: Set<String>, privacy: Bool, copyNotes: Bool, syncReminders: Bool, mergeGapHours: Int, overlap: OverlapMode, allDay: Bool, titlePrefix: String? = nil, mirrorMirroredEvents: Bool = false, passThroughMirroredTitles: Bool = false, excludedTitleFilters: String = "", excludedOrganizerFilters: String = "", overrideGlobalFilters: Bool = false, filterByWorkHours: Bool? = nil, workHoursStart: Int? = nil, workHoursEnd: Int? = nil, mirrorAcceptedOnly: Bool? = nil) {
         self.sourceID = sourceID
         self.targetIDs = targetIDs
         self.privacy = privacy
@@ -38,6 +52,13 @@ struct Route: Identifiable, Hashable, Codable {
         self.titlePrefix = titlePrefix
         self.mirrorMirroredEvents = mirrorMirroredEvents
         self.passThroughMirroredTitles = passThroughMirroredTitles
+        self.excludedTitleFilters = excludedTitleFilters
+        self.excludedOrganizerFilters = excludedOrganizerFilters
+        self.overrideGlobalFilters = overrideGlobalFilters
+        self.filterByWorkHours = filterByWorkHours
+        self.workHoursStart = workHoursStart
+        self.workHoursEnd = workHoursEnd
+        self.mirrorAcceptedOnly = mirrorAcceptedOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +74,48 @@ struct Route: Identifiable, Hashable, Codable {
         self.titlePrefix = try c.decodeIfPresent(String.self, forKey: .titlePrefix)
         self.mirrorMirroredEvents = try c.decodeIfPresent(Bool.self, forKey: .mirrorMirroredEvents) ?? false
         self.passThroughMirroredTitles = try c.decodeIfPresent(Bool.self, forKey: .passThroughMirroredTitles) ?? false
+        self.excludedTitleFilters = try c.decodeIfPresent(String.self, forKey: .excludedTitleFilters) ?? ""
+        self.excludedOrganizerFilters = try c.decodeIfPresent(String.self, forKey: .excludedOrganizerFilters) ?? ""
+        self.overrideGlobalFilters = try c.decodeIfPresent(Bool.self, forKey: .overrideGlobalFilters) ?? false
+        self.filterByWorkHours = try c.decodeIfPresent(Bool.self, forKey: .filterByWorkHours)
+        self.workHoursStart = try c.decodeIfPresent(Int.self, forKey: .workHoursStart)
+        self.workHoursEnd = try c.decodeIfPresent(Int.self, forKey: .workHoursEnd)
+        self.mirrorAcceptedOnly = try c.decodeIfPresent(Bool.self, forKey: .mirrorAcceptedOnly)
+    }
+
+    // Effective per-run filter settings: the route's own value where set, else the app's global one.
+    // `global` terms must already be lowercased (parseFilterTerms does that for route terms).
+    func titleFilterTerms(global: [String]) -> [String] {
+        (overrideGlobalFilters ? [] : global) + parseFilterTerms(excludedTitleFilters)
+    }
+    func organizerFilterTerms(global: [String]) -> [String] {
+        (overrideGlobalFilters ? [] : global) + parseFilterTerms(excludedOrganizerFilters)
+    }
+    func workHours(globalEnabled: Bool, globalStart: Int, globalEnd: Int) -> (enabled: Bool, start: Int, end: Int) {
+        (filterByWorkHours ?? globalEnabled, workHoursStart ?? globalStart, workHoursEnd ?? globalEnd)
+    }
+}
+
+// Inherit / force-on / force-off for an optional per-route Bool (nil / true / false) — the Bool?
+// counterpart of PrefixMode, for both apps' route editors.
+enum OverrideChoice: String, CaseIterable, Identifiable {
+    case global = "Global", on = "On", off = "Off"
+    var id: String { rawValue }
+
+    init(_ value: Bool?) {
+        switch value {
+        case .none: self = .global
+        case .some(true): self = .on
+        case .some(false): self = .off
+        }
+    }
+
+    var value: Bool? {
+        switch self {
+        case .global: return nil
+        case .on: return true
+        case .off: return false
+        }
     }
 }
 
