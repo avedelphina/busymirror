@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write   # gh release create needs it; the default token is read-only
+
 jobs:
   release:
     runs-on: macos-15
